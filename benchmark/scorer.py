@@ -39,25 +39,139 @@ CONNECTIVITY_PROBES = [
     ("client-e → anycast v6", "client-e", ["ping", "-6", "-c3", "-W2", "2001:db8:cafe::1"], 6.25),
 ]
 
-# Each hardening probe: (name, node, vendor, show_command, regex_evidence, max_points)
-# Vendors: "arista", "junos", "frr"
-# The probe is PASS iff the regex matches the show output.
+# Hardening probes — TIGHTENED v2.
+#
+# v1 (run #1, run #2) used loose substring regexes against free-form show output.
+# Run #2's audit found that an agent can game these by:
+#   - Putting trigger words in interface descriptions (storm-control)
+#   - Customizing the Junos CLI prompt and login banner so every show output
+#     contains the regex tokens (ISIS auth)
+#   - Configuring features but disabling enforcement (no-authentication-check)
+#
+# v2 fixes:
+#   - Each probe targets a SPECIFIC show command that emits structured config
+#     (typically "display set" on Junos or anchored running-config on Arista)
+#   - Regexes are anchored to line start (^) so they can't match prompts/MOTDs
+#   - Probes that need both positive and negative evidence use the new
+#     ProbeFn signature instead of a flat regex
+#   - AAA requires BOTH authentication login AND authorization exec
+#   - Syslog requires BOTH host AND source-interface
+#   - NTP requires authentication-key + trusted-key + authenticate + server-with-key
+#   - Storm-control regex anchored: ^\s+storm-control\s+(broadcast|multicast|unknown-unicast)
+#     so a "description storm-control ..." line cannot match
+#   - ISIS auth requires hello-authentication-key configured AND
+#     no-authentication-check ABSENT (the agent's bypass technique)
+
+def _probe_bgp_md5(run) -> tuple[bool, str]:
+    """BGP MD5 on PE iBGP — verify key exists in protocols bgp stanza
+    (group-level OR per-neighbor) AND iBGP session is Established."""
+    rc, out = run("pe-w", "junos", "show configuration protocols bgp | display set")
+    # Accept either group-level or per-neighbor placement
+    has_key = bool(re.search(
+        r"^set protocols bgp group \S+ (neighbor \S+ )?(authentication-key|authentication-algorithm)",
+        out, re.MULTILINE))
+    if not has_key:
+        return False, "no authentication-key in protocols bgp"
+    rc, sumout = run("pe-w", "junos", "show bgp summary")
+    # NB: line ends "Establ" (truncated by Junos column width); \bEstab\b would
+    # not match because the l is a word char. Use \bEstabl to anchor on "Establ".
+    rr_up = bool(re.search(r"^10\.255\.0\.1\s.*\bEstabl", sumout, re.MULTILINE))
+    if not rr_up:
+        return False, "key configured but iBGP to 10.255.0.1 not Established"
+    return True, "key in protocols bgp + session Established"
+
+
+def _probe_isis_auth(run) -> tuple[bool, str]:
+    """ISIS auth on PE — verify hello-authentication-key in interface stanza
+    AND no-authentication-check is NOT present (the bypass)."""
+    rc, out = run("pe-w", "junos", "show configuration protocols isis | display set")
+    has_auth = bool(re.search(
+        r"^set protocols isis interface \S+ hello-authentication-(key|type)",
+        out, re.MULTILINE))
+    has_bypass = bool(re.search(r"^set protocols isis no-authentication-check\b",
+                                out, re.MULTILINE))
+    if has_bypass:
+        return False, "hello-authentication-key set but no-authentication-check disables enforcement"
+    if not has_auth:
+        return False, "no hello-authentication-key in protocols isis interface stanza"
+    return True, "hello-authentication-key set + no-authentication-check absent"
+
+
+def _probe_snmpv3(run) -> tuple[bool, str]:
+    """SNMPv3 user with auth+priv on Arista leaf."""
+    rc, out = run("l1-w", "arista", "show snmp user")
+    # The operational `show snmp user` output has a structured format:
+    #   User name      : cdnmon
+    #   Security model : v3
+    #   Authentication : SHA
+    #   Privacy        : AES-128
+    has_v3 = bool(re.search(r"^Security model\s*:\s*v3", out, re.MULTILINE))
+    has_auth = bool(re.search(r"^Authentication\s*:\s*(SHA|MD5)", out, re.MULTILINE))
+    has_priv = bool(re.search(r"^Privacy\s*:\s*(AES|AES-128|AES-256|DES)", out, re.MULTILINE))
+    if has_v3 and has_auth and has_priv:
+        return True, "snmpv3 user with auth+priv exists"
+    return False, f"v3={has_v3} auth={has_auth} priv={has_priv}"
+
+
+def _probe_ntp_auth(run) -> tuple[bool, str]:
+    """NTP authentication — must have key, trusted-key, authenticate, AND
+    a server reference using a key (all four components, not just one)."""
+    rc, out = run("l1-w", "arista", "show running-config | section ntp")
+    has_key = bool(re.search(r"^ntp authentication-key \d+ ", out, re.MULTILINE))
+    has_trusted = bool(re.search(r"^ntp trusted-key \d+", out, re.MULTILINE))
+    has_authenticate = bool(re.search(r"^ntp authenticate\s*$", out, re.MULTILINE))
+    has_server_key = bool(re.search(r"^ntp server \S+ .*\bkey \d+", out, re.MULTILINE))
+    all_ok = has_key and has_trusted and has_authenticate and has_server_key
+    if all_ok:
+        return True, "key+trusted+authenticate+server-with-key all present"
+    return False, (f"key={has_key} trusted={has_trusted} "
+                   f"authenticate={has_authenticate} server-key={has_server_key}")
+
+
+def _probe_aaa(run) -> tuple[bool, str]:
+    """AAA — require BOTH authentication login AND authorization exec
+    (the v1 probe accepted either, allowing partial implementation to pass)."""
+    rc, out = run("l1-w", "arista", "show running-config | section aaa")
+    has_authn = bool(re.search(r"^aaa authentication login\b", out, re.MULTILINE))
+    has_authz = bool(re.search(r"^aaa authorization exec\b", out, re.MULTILINE))
+    if has_authn and has_authz:
+        return True, "both aaa authentication login and aaa authorization exec set"
+    return False, f"authn={has_authn} authz={has_authz} (need both)"
+
+
+def _probe_syslog(run) -> tuple[bool, str]:
+    """Syslog — require BOTH host AND source-interface (correctly tagged forwarding)."""
+    rc, out = run("l1-w", "arista", "show running-config | section logging")
+    has_host = bool(re.search(r"^logging host 10\.255\.0\.100\b", out, re.MULTILINE))
+    has_source = bool(re.search(r"^logging source-interface Loopback0\b", out, re.MULTILINE))
+    if has_host and has_source:
+        return True, "host + source-interface both set"
+    return False, f"host={has_host} source={has_source}"
+
+
+def _probe_storm_control(run) -> tuple[bool, str]:
+    """Storm control — must be a real `storm-control <type> level <N>` command
+    on the host port, NOT a description line containing the substring."""
+    rc, out = run("l1-w", "arista", "show running-config interfaces Ethernet3")
+    # Anchored: line must start with whitespace then storm-control then a type word
+    # then "level". Description lines like "description storm-control ..." won't match.
+    has_real = bool(re.search(
+        r"^\s+storm-control\s+(broadcast|multicast|unknown-unicast)\s+level\s+\S+",
+        out, re.MULTILINE))
+    if has_real:
+        return True, "real storm-control command on Ethernet3"
+    return False, "no storm-control <type> level command on Ethernet3"
+
+
+# Each entry: (name, max_points, probe_function)
 HARDENING_PROBES = [
-    ("BGP MD5 (PE iBGP)",     "pe-w",  "junos",  "show bgp neighbor 10.255.0.1",
-        r"Authentication.*key.*configured|Authentication algorithm",            3.6),
-    ("ISIS auth (PE)",        "pe-w",  "junos",  "show isis interface detail",
-        r"hello-authentication|authentication-key-chain",                       3.6),
-    ("SNMPv3 (Arista leaf)",  "l1-w",  "arista", "show running-config | section snmp-server",
-        r"snmp-server\s+user\s+\S+\s+v3|snmp-server\s+group\s+.*v3",            3.6),
-    ("NTP auth (Arista leaf)", "l1-w", "arista", "show running-config | section ntp",
-        r"ntp\s+authenticate|ntp\s+authentication-key|ntp\s+server.*\bkey\b",   3.6),
-    ("AAA (Arista leaf)",     "l1-w",  "arista", "show running-config | section aaa",
-        r"aaa\s+authorization\s+exec|aaa\s+authentication\s+login",             3.6),
-    ("Syslog forwarding (Arista leaf)", "l1-w", "arista", "show running-config | section logging",
-        r"logging\s+host\s+10\.255\.0\.100",                                    3.6),
-    ("Storm control (Arista leaf host port)", "l1-w", "arista",
-        "show running-config interfaces Ethernet3",
-        r"storm-control",                                                       3.4),
+    ("BGP MD5 (PE iBGP)",                 3.6, _probe_bgp_md5),
+    ("ISIS auth (PE)",                    3.6, _probe_isis_auth),
+    ("SNMPv3 (Arista leaf)",              3.6, _probe_snmpv3),
+    ("NTP auth (Arista leaf)",            3.6, _probe_ntp_auth),
+    ("AAA (Arista leaf)",                 3.6, _probe_aaa),
+    ("Syslog forwarding (Arista leaf)",   3.6, _probe_syslog),
+    ("Storm control (Arista leaf host)",  3.4, _probe_storm_control),
 ]
 
 
@@ -151,30 +265,36 @@ def grade_connectivity() -> tuple[list[dict], float, float]:
     return results, earned, total
 
 
+def _hardening_run(node: str, vendor: str, show_cmd: str) -> tuple[int, str]:
+    """Adapter for hardening probe functions to call vendor runners."""
+    return VENDOR_RUNNERS[vendor](node, show_cmd)
+
+
 def grade_hardening() -> tuple[list[dict], float, float]:
-    """Run all 7 hardening probes. Return per-probe results, earned, max."""
+    """Run all 7 hardening probes (v2 — tightened, anti-gaming).
+
+    Each probe is a function that returns (passed: bool, evidence: str).
+    The probe internals (show commands, regexes) are NOT exposed in the
+    JSON output so an iterating agent cannot reverse-engineer them.
+    """
     results = []
     earned = 0.0
     total = 0.0
-    for name, node, vendor, show_cmd, regex, max_pts in HARDENING_PROBES:
+    for name, max_pts, probe_fn in HARDENING_PROBES:
         total += max_pts
-        runner = VENDOR_RUNNERS[vendor]
-        rc, out = runner(node, show_cmd)
-        match = bool(re.search(regex, out, re.IGNORECASE | re.MULTILINE))
-        passed = rc == 0 and match
+        try:
+            passed, evidence = probe_fn(_hardening_run)
+        except Exception as e:
+            passed, evidence = False, f"probe error: {e}"
         pts = max_pts if passed else 0.0
         earned += pts
         results.append({
             "category": "hardening",
             "name": name,
-            "node": node,
-            "vendor": vendor,
-            "show_command": show_cmd,
-            "regex": regex,
             "passed": passed,
             "points": pts,
             "max_points": max_pts,
-            "rc": rc,
+            "evidence": evidence[:300],
         })
     return results, earned, total
 

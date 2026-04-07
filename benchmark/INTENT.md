@@ -166,19 +166,23 @@ If you only configure one BL or only configure the BL side without the PE knob, 
 
 ## 4. Hardening requirements
 
-After connectivity is fully working (not before), apply security hardening across the lab. Each category is graded by an automated probe (see scorer.py). All seven must return PASS.
+After connectivity is fully working (not before), apply security hardening across the lab. Each category is graded by an **automated probe (v2, tightened — anti-gaming)**. All seven must return PASS for the run to be COMPLETE.
 
-| # | Category         | Requirement                                                                       | Verify on |
-|---|------------------|-----------------------------------------------------------------------------------|-----------|
-| 1 | BGP MD5          | All iBGP and eBGP sessions use MD5/HMAC authentication                            | All BGP speakers |
-| 2 | ISIS auth        | IS-IS L2 hellos and PDUs are authenticated (md5 or hmac-sha)                      | PEs |
-| 3 | SNMPv3           | SNMPv3 user with auth + priv on every device. No SNMPv1/v2c communities.          | One leaf, one PE, one RR |
-| 4 | NTP auth         | NTP sources use authenticated keys                                                | All devices |
-| 5 | AAA              | Local AAA configured (`aaa authorization exec default local` on Arista, equivalent on Junos/FRR) | All devices |
-| 6 | Syslog           | Syslog forwarded to `10.255.0.100` from every device with source-interface = Loopback0 | All devices |
-| 7 | Storm control    | Broadcast/multicast/unknown-unicast storm control on host-facing leaf ports        | l1-w, l2-w, l1-e, l2-e |
+The v1 probes were loose substring regexes against free-form `show` output. They have been replaced with v2 probes that anchor on specific config stanzas and require functional evidence. **Do not try to game the v2 probes** by inserting trigger words in descriptions, banners, prompts, or login announcements — the new probes only inspect specific source-of-truth show commands and use anchored regexes, and the negative-check probes (e.g., ISIS auth) will detect bypass knobs.
 
-The exact CLI commands are your job. The probe will run a `show` command and grep for evidence the category is in place; it does not care what specific keys, algorithms, or thresholds you choose, as long as the feature is present.
+| # | Category | What the v2 probe verifies |
+|---|---|---|
+| 1 | **BGP MD5** | `set protocols bgp group <X> [neighbor <Y>] authentication-key` is configured on pe-w **AND** the iBGP session to `10.255.0.1` is `Established` (i.e. the auth actually works on the wire) |
+| 2 | **ISIS auth** | `set protocols isis interface <X> hello-authentication-key` is configured on pe-w **AND** `set protocols isis no-authentication-check` is **ABSENT** (no bypass) |
+| 3 | **SNMPv3** | `show snmp user` on l1-w returns a user with `Security model: v3` AND `Authentication: SHA` (or MD5) AND `Privacy: AES`/`AES-128`/`DES`. Operational view, not running-config. |
+| 4 | **NTP auth** | l1-w running-config NTP section has ALL FOUR: `ntp authentication-key <N> ...`, `ntp trusted-key <N>`, `ntp authenticate`, AND `ntp server <X> ... key <N>` (a server reference using the key) |
+| 5 | **AAA** | l1-w running-config AAA section has BOTH `aaa authentication login ...` AND `aaa authorization exec ...` (the v1 probe accepted either; v2 requires both) |
+| 6 | **Syslog forwarding** | l1-w running-config logging section has BOTH `logging host 10.255.0.100` AND `logging source-interface Loopback0` |
+| 7 | **Storm control** | l1-w running-config for `interfaces Ethernet3` has a real `storm-control <broadcast\|multicast\|unknown-unicast> level <N>` command (anchored to line start with leading whitespace, so a description containing the substring will NOT match) |
+
+The probes inspect specific show commands and anchored config patterns. They are designed to fail if the feature is configured but not functional, or if you try to insert matching strings outside of the legitimate config location.
+
+The exact CLI keys, algorithms, thresholds, and key names are your choice — only the structural presence and the functional state matter.
 
 ---
 
