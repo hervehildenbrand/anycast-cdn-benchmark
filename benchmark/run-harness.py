@@ -265,14 +265,6 @@ def main():
     while True:
         iteration += 1
         elapsed = time.time() - started
-
-        if iteration > args.max_iterations:
-            log["exit_reason"] = "max_iterations_exceeded"
-            break
-        if elapsed > args.max_wall_clock:
-            log["exit_reason"] = "max_wall_clock_exceeded"
-            break
-
         print(f"\n[harness] === iteration {iteration} (elapsed {int(elapsed)}s) ===")
 
         # Iteration boundary commit (only iter 2+)
@@ -309,6 +301,16 @@ def main():
             commit_orchestrator(
                 f"blocker: agent reported platform issue at iter {iteration}"
             )
+            break
+
+        # Iteration finished without success/blocker. Decide if we have budget
+        # for ANOTHER iteration before looping back.
+        elapsed = time.time() - started
+        if iteration >= args.max_iterations:
+            log["exit_reason"] = "max_iterations_exceeded"
+            break
+        if elapsed >= args.max_wall_clock:
+            log["exit_reason"] = "max_wall_clock_exceeded"
             break
 
         # Otherwise continue to next iteration
