@@ -143,7 +143,20 @@ You must satisfy ALL of the following. Each is independently verified by the gat
 - Watch for the v6 next-hop resolution trap on Junos: VPNv6 control-plane works fine, but v4-mapped IPv6 next-hops do not resolve in `inet6.3` by default. Decide your transport strategy (dual-stack iBGP transport, 6PE, or something else) and document it.
 
 ### 3.5 Weighted ECMP across DCI
-- DCI links have asymmetric capacity. Use BGP link bandwidth or DC-local route policies so that the cross-DC traffic ratio favors the **west** side 4:1. The exact mechanism is up to you; it must be observable as different `Multipath` weights or BGP-LB extended community values.
+
+Each DC has **two parallel DCI links** between its PE and its border-leaf (e.g. pe-w↔bl-w via Ethernet3 and Ethernet4). You must produce a **4:1 traffic ratio** between those two parallel links by advertising the BGP link-bandwidth extended community with two different bandwidth values (4× on one session, 1× on the other) — and configuring the receiving PE to honor it.
+
+The scorer's wECMP probe checks five things, all required to score full points (5/5):
+
+1. **bl-w advertises ≥2 distinct link-bandwidth ext-community values** on its outbound DCI route announcements (one per session, so the receiving pe-w sees the asymmetry)
+2. **bl-w's two values form a 4:1 ratio** (within ±10% tolerance)
+3. **bl-e advertises ≥2 distinct link-bandwidth values** (same idea, mirrored on the east side)
+4. **bl-e's two values form a 4:1 ratio**
+5. **At least one PE has the Junos `bgp-multipath link-bandwidth` knob set** — without this, Junos receives the lbw ext-community but ignores it for unequal ECMP, and the 4:1 advertisement is silently wasted
+
+If you only configure one BL or only configure the BL side without the PE knob, the probe will give partial credit but the run will not be COMPLETE. Both BLs and at least one PE must be set up.
+
+`client-w` (attached to pe-w) and `client-e` (attached to pe-e) must both still reach the anycast VIP regardless — the wECMP only changes the *distribution* across links, not connectivity.
 
 ### 3.6 Anycast CDN VIP
 - Both border-leaves originate `198.51.100.1/32` and `2001:db8:cafe::1/128` from a Loopback100 in VRF CDN.

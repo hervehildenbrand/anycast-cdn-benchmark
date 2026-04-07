@@ -179,6 +179,92 @@ def grade_hardening() -> tuple[list[dict], float, float]:
     return results, earned, total
 
 
+def grade_wecmp() -> tuple[list[dict], float, float]:
+    """Verify weighted ECMP across DCI links produces a 4:1 ratio.
+
+    5 sub-checks worth 1 point each (total 5):
+      1. bl-w advertises link-bandwidth ext-community on its DCI sessions
+         (at least two DISTINCT lbw values, indicating per-session weighting)
+      2. bl-w's two lbw values form a 4:1 ratio (within 10% tolerance)
+      3. bl-e advertises link-bandwidth ext-community
+      4. bl-e's two lbw values form a 4:1 ratio
+      5. At least one PE has the Junos `bgp-multipath link-bandwidth` knob set,
+         which is what makes Junos honor the lbw ext-community for unequal ECMP.
+         Without this knob, the BL advertisements are ignored on the receiving side.
+
+    These checks are deliberately structural — they verify the *configuration*
+    that produces 4:1, not the data plane distribution itself (which would
+    require traffic generation).
+    """
+    results = []
+    earned = 0.0
+    total = 5.0
+
+    def add(name: str, passed: bool, evidence: str = "") -> None:
+        nonlocal earned
+        pts = 1.0 if passed else 0.0
+        earned += pts
+        results.append({
+            "category": "wecmp",
+            "name": name,
+            "passed": passed,
+            "points": pts,
+            "max_points": 1.0,
+            "evidence": evidence[:200],
+        })
+
+    # bl-w running config (BGP section + any route-maps it references)
+    rc, bl_w_run = run_arista("bl-w", "show running-config")
+    bl_w_lbw_values = [int(v) for v in re.findall(
+        r"set\s+extcommunity\s+lbw\s+(\d+)", bl_w_run, re.IGNORECASE)]
+    bl_w_distinct = len(set(bl_w_lbw_values)) >= 2
+    add("bl-w advertises ≥2 distinct link-bandwidth values on DCI",
+        bl_w_distinct,
+        f"lbw values found: {bl_w_lbw_values}")
+
+    bl_w_ratio_ok = False
+    if bl_w_distinct:
+        nums = sorted(set(bl_w_lbw_values))
+        ratio = nums[-1] / nums[0]
+        bl_w_ratio_ok = 3.5 <= ratio <= 4.5
+        add("bl-w lbw ratio is 4:1 (±10%)", bl_w_ratio_ok,
+            f"min={nums[0]} max={nums[-1]} ratio={ratio:.2f}")
+    else:
+        add("bl-w lbw ratio is 4:1 (±10%)", False,
+            "skipped: no distinct lbw values to compare")
+
+    # bl-e running config
+    rc, bl_e_run = run_arista("bl-e", "show running-config")
+    bl_e_lbw_values = [int(v) for v in re.findall(
+        r"set\s+extcommunity\s+lbw\s+(\d+)", bl_e_run, re.IGNORECASE)]
+    bl_e_distinct = len(set(bl_e_lbw_values)) >= 2
+    add("bl-e advertises ≥2 distinct link-bandwidth values on DCI",
+        bl_e_distinct,
+        f"lbw values found: {bl_e_lbw_values}")
+
+    bl_e_ratio_ok = False
+    if bl_e_distinct:
+        nums = sorted(set(bl_e_lbw_values))
+        ratio = nums[-1] / nums[0]
+        bl_e_ratio_ok = 3.5 <= ratio <= 4.5
+        add("bl-e lbw ratio is 4:1 (±10%)", bl_e_ratio_ok,
+            f"min={nums[0]} max={nums[-1]} ratio={ratio:.2f}")
+    else:
+        add("bl-e lbw ratio is 4:1 (±10%)", False,
+            "skipped: no distinct lbw values to compare")
+
+    # PE side honors link-bandwidth (Junos knob)
+    rc, pe_w_bgp = run_junos("pe-w", "show configuration protocols bgp")
+    pe_w_honors = bool(re.search(r"link-bandwidth", pe_w_bgp, re.IGNORECASE))
+    rc, pe_e_bgp = run_junos("pe-e", "show configuration protocols bgp")
+    pe_e_honors = bool(re.search(r"link-bandwidth", pe_e_bgp, re.IGNORECASE))
+    add("≥1 PE honors link-bandwidth (Junos `bgp-multipath link-bandwidth`)",
+        pe_w_honors or pe_e_honors,
+        f"pe-w={pe_w_honors} pe-e={pe_e_honors}")
+
+    return results, earned, total
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -201,6 +287,7 @@ def main():
 
     conn_results, conn_earned, conn_max = grade_connectivity()
     hard_results, hard_earned, hard_max = grade_hardening()
+    wecmp_results, wecmp_earned, wecmp_max = grade_wecmp()
 
     elapsed = time.time() - started
 
@@ -216,9 +303,21 @@ def main():
         mark = "PASS" if r["passed"] else "FAIL"
         print(f"  [{mark}] {r['name']}")
 
-    total_earned = conn_earned + hard_earned
-    total_max = conn_max + hard_max
-    complete = (conn_earned >= conn_max - 0.01) and (hard_earned >= hard_max - 0.01)
+    print()
+    print(f"--- wECMP ({wecmp_earned:.1f}/{wecmp_max:.1f}) ---")
+    for r in wecmp_results:
+        mark = "PASS" if r["passed"] else "FAIL"
+        ev = r.get("evidence", "")
+        suffix = f"  ({ev})" if ev else ""
+        print(f"  [{mark}] {r['name']}{suffix}")
+
+    total_earned = conn_earned + hard_earned + wecmp_earned
+    total_max = conn_max + hard_max + wecmp_max
+    complete = (
+        conn_earned >= conn_max - 0.01
+        and hard_earned >= hard_max - 0.01
+        and wecmp_earned >= wecmp_max - 0.01
+    )
 
     print()
     print(f"=" * 70)
@@ -243,6 +342,13 @@ def main():
             "pass_count": sum(1 for r in hard_results if r["passed"]),
             "total":      len(hard_results),
             "results":    hard_results,
+        },
+        "wecmp": {
+            "earned": round(wecmp_earned, 1),
+            "max":    round(wecmp_max, 1),
+            "pass_count": sum(1 for r in wecmp_results if r["passed"]),
+            "total":      len(wecmp_results),
+            "results":    wecmp_results,
         },
         "total": {
             "earned":   round(total_earned, 1),
