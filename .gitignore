@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Containerlab runtime artifacts
+topology/clab-*/
+topology/.clab.yml.bak
+topology/*.tmp
+
+# Per-run benchmark artifacts that shouldn't be committed by the orchestrator
+# (subagents commit these themselves with their author identities)
