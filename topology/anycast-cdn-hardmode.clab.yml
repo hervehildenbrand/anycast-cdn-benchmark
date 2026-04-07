@@ -1,0 +1,267 @@
+name: anycast-cdn-hardmode
+topology:
+  kinds:
+    linux:
+      image: nicolaka/netshoot
+  nodes:
+    rr1:
+      kind: linux
+      image: quay.io/frrouting/frr:10.5.1
+      binds:
+      - configs/frr/rr1/daemons:/etc/frr/daemons
+      - configs/frr/rr1/frr.conf:/etc/frr/frr.conf
+      group: wan
+      labels:
+        role: rr
+        loopback: 10.255.0.1
+        asn: '65000'
+    rr2:
+      kind: linux
+      image: quay.io/frrouting/frr:10.5.1
+      binds:
+      - configs/frr/rr2/daemons:/etc/frr/daemons
+      - configs/frr/rr2/frr.conf:/etc/frr/frr.conf
+      group: wan
+      labels:
+        role: rr
+        loopback: 10.255.0.2
+        asn: '65000'
+    pe-w:
+      kind: juniper_vjunosevolved
+      image: vrnetlab/juniper_vjunosevolved:25.2R1.8-EVO
+      startup-config: configs/juniper/pe-w-baseline.conf
+      group: wan
+      labels:
+        role: pe
+        dc: west
+        loopback: 10.255.0.11
+        asn: '65000'
+    pe-e:
+      kind: juniper_vjunosevolved
+      image: vrnetlab/juniper_vjunosevolved:25.2R1.8-EVO
+      startup-config: configs/juniper/pe-e-baseline.conf
+      group: wan
+      labels:
+        role: pe
+        dc: east
+        loopback: 10.255.0.13
+        asn: '65000'
+    spine-w:
+      kind: ceos
+      image: ceos:4.35.1F
+      startup-config: configs/arista/spine-w-baseline.conf
+      group: dc-west
+      labels:
+        role: spine
+        dc: west
+        loopback: 10.255.10.1
+        asn: '65100'
+    l1-w:
+      kind: ceos
+      image: ceos:4.35.1F
+      startup-config: configs/arista/l1-w-baseline.conf
+      group: dc-west
+      labels:
+        role: leaf
+        dc: west
+        loopback: 10.255.10.11
+        asn: '65100'
+    l2-w:
+      kind: ceos
+      image: ceos:4.35.1F
+      startup-config: configs/arista/l2-w-baseline.conf
+      group: dc-west
+      labels:
+        role: leaf
+        dc: west
+        loopback: 10.255.10.12
+        asn: '65100'
+    bl-w:
+      kind: ceos
+      image: ceos:4.35.1F
+      startup-config: configs/arista/bl-w-baseline.conf
+      group: dc-west
+      labels:
+        role: border-leaf
+        dc: west
+        loopback: 10.255.10.21
+        asn: '65100'
+    spine-e:
+      kind: ceos
+      image: ceos:4.35.1F
+      startup-config: configs/arista/spine-e-baseline.conf
+      group: dc-east
+      labels:
+        role: spine
+        dc: east
+        loopback: 10.255.30.1
+        asn: '65300'
+    l1-e:
+      kind: ceos
+      image: ceos:4.35.1F
+      startup-config: configs/arista/l1-e-baseline.conf
+      group: dc-east
+      labels:
+        role: leaf
+        dc: east
+        loopback: 10.255.30.11
+        asn: '65300'
+    l2-e:
+      kind: ceos
+      image: ceos:4.35.1F
+      startup-config: configs/arista/l2-e-baseline.conf
+      group: dc-east
+      labels:
+        role: leaf
+        dc: east
+        loopback: 10.255.30.12
+        asn: '65300'
+    bl-e:
+      kind: ceos
+      image: ceos:4.35.1F
+      startup-config: configs/arista/bl-e-baseline.conf
+      group: dc-east
+      labels:
+        role: border-leaf
+        dc: east
+        loopback: 10.255.30.21
+        asn: '65300'
+    h1-w:
+      kind: linux
+      group: hosts-west
+      labels:
+        role: host
+        dc: west
+      exec:
+      - ip addr add 192.168.10.10/24 dev eth1
+      - ip -6 addr add 2001:db8:10::10/64 dev eth1
+      - ip route replace default via 192.168.10.1
+      - ip -6 route replace default via 2001:db8:10::1
+    h2-w:
+      kind: linux
+      group: hosts-west
+      labels:
+        role: host
+        dc: west
+      exec:
+      - ip addr add 192.168.11.10/24 dev eth1
+      - ip -6 addr add 2001:db8:11::10/64 dev eth1
+      - ip route replace default via 192.168.11.1
+      - ip -6 route replace default via 2001:db8:11::1
+    h1-e:
+      kind: linux
+      group: hosts-east
+      labels:
+        role: host
+        dc: east
+      exec:
+      - ip addr add 192.168.30.10/24 dev eth1
+      - ip -6 addr add 2001:db8:30::10/64 dev eth1
+      - ip route replace default via 192.168.30.1
+      - ip -6 route replace default via 2001:db8:30::1
+    h2-e:
+      kind: linux
+      group: hosts-east
+      labels:
+        role: host
+        dc: east
+      exec:
+      - ip addr add 192.168.31.10/24 dev eth1
+      - ip -6 addr add 2001:db8:31::10/64 dev eth1
+      - ip route replace default via 192.168.31.1
+      - ip -6 route replace default via 2001:db8:31::1
+    client-w:
+      kind: linux
+      group: hosts-west
+      labels:
+        role: host
+        dc: west
+      exec:
+      - ip addr add 10.100.0.1/31 dev eth1
+      - ip -6 addr add fd00:100::1/127 dev eth1
+      - ip route replace default via 10.100.0.0
+      - 'ip -6 route replace default via fd00:100::'
+    client-e:
+      kind: linux
+      group: hosts-east
+      labels:
+        role: host
+        dc: east
+      exec:
+      - ip addr add 10.100.2.1/31 dev eth1
+      - ip -6 addr add fd00:100:2::1/127 dev eth1
+      - ip route replace default via 10.100.2.0
+      - 'ip -6 route replace default via fd00:100:2::'
+  links:
+  - endpoints:
+    - rr1:eth1
+    - rr2:eth1
+  - endpoints:
+    - rr1:eth2
+    - pe-w:eth1
+  - endpoints:
+    - rr1:eth3
+    - pe-e:eth1
+  - endpoints:
+    - rr2:eth2
+    - pe-w:eth2
+  - endpoints:
+    - rr2:eth3
+    - pe-e:eth2
+  - endpoints:
+    - pe-w:eth6
+    - pe-e:eth6
+  - endpoints:
+    - pe-w:eth3
+    - bl-w:eth3
+  - endpoints:
+    - pe-w:eth4
+    - bl-w:eth4
+  - endpoints:
+    - pe-e:eth3
+    - bl-e:eth3
+  - endpoints:
+    - pe-e:eth4
+    - bl-e:eth4
+  - endpoints:
+    - pe-w:eth5
+    - client-w:eth1
+  - endpoints:
+    - pe-e:eth5
+    - client-e:eth1
+  - endpoints:
+    - spine-w:eth1
+    - l1-w:eth1
+  - endpoints:
+    - spine-w:eth2
+    - l2-w:eth1
+  - endpoints:
+    - spine-w:eth3
+    - bl-w:eth1
+  - endpoints:
+    - spine-w:eth4
+    - bl-w:eth2
+  - endpoints:
+    - spine-e:eth1
+    - l1-e:eth1
+  - endpoints:
+    - spine-e:eth2
+    - l2-e:eth1
+  - endpoints:
+    - spine-e:eth3
+    - bl-e:eth1
+  - endpoints:
+    - spine-e:eth4
+    - bl-e:eth2
+  - endpoints:
+    - l1-w:eth3
+    - h1-w:eth1
+  - endpoints:
+    - l2-w:eth3
+    - h2-w:eth1
+  - endpoints:
+    - l1-e:eth3
+    - h1-e:eth1
+  - endpoints:
+    - l2-e:eth3
+    - h2-e:eth1
