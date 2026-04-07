@@ -103,9 +103,78 @@ The required subagents (you may add more if useful):
 | `Agent-DC-West`   | `Agent-DC-West <dc-west@ai-agents.local>`      | spine-w, l1-w, l2-w, bl-w          |
 | `Agent-DC-East`   | `Agent-DC-East <dc-east@ai-agents.local>`      | spine-e, l1-e, l2-e, bl-e          |
 | `Agent-Harden`    | `Agent-Harden <harden@ai-agents.local>`        | All devices (after main config converges) |
-| `Agent-Verify`    | `Agent-Verify <verify@ai-agents.local>`        | Run scorer, write results.json     |
+| `Agent-Verify`    | `Agent-Verify <verify@ai-agents.local>`        | Deep verification + results (see below) |
 
 The main agent commits `design.md` and any integration artifacts as `Agent-Architect <architect@ai-agents.local>`.
+
+### Agent-Verify deep verification (REQUIRED for COMPLETE)
+
+After connectivity and hardening converge, **before** running the final scorer, Agent-Verify must produce **four** artifacts. The scorer's `deep_verify` probe checks that all four exist with non-trivial content; missing or fake artifacts cause the run to fail COMPLETE.
+
+**Artifact 1: `benchmark/results.json`** — written by the scorer itself; Agent-Verify just runs `python3 benchmark/scorer.py` and commits the resulting file. (Existing requirement.)
+
+**Artifact 2: `benchmark/audit-report.md`** — control-plane and data-plane evidence collected by Agent-Verify across the lab. Markdown format with one section per device (or per role group). For each device, include the output of the relevant show commands proving its protocol state is healthy. Minimum content (~2 KB):
+- For each Junos PE: `show isis adjacency`, `show bgp summary`, `show route table CDN.inet.0`, `show route 198.51.100.1 vpn CDN extensive`
+- For each Arista spine: `show bgp evpn summary`
+- For each Arista leaf+BL: `show bgp evpn route-type imet`, `show bgp evpn route-type mac-ip`, `show vxlan vtep`
+- For each FRR RR: `show bgp ipv4 vpn summary`, `show bgp ipv6 vpn summary`
+
+**Artifact 3: `benchmark/wecmp-traffic-test.json`** — empirical wECMP packet ratio measurement. The structural wECMP probe only checks config presence; this artifact proves the data plane actually distributes traffic 4:1. Generate at least 1000 distinct flows from `client-w` and measure the per-interface packet count delta on pe-w. Required JSON schema:
+
+```json
+{
+  "method": "1000 UDP flows from client-w to 198.51.100.1, distinct source ports",
+  "snapshot_before": {
+    "pe-w_et-0/0/2": <packets>,
+    "pe-w_et-0/0/3": <packets>
+  },
+  "snapshot_after": {
+    "pe-w_et-0/0/2": <packets>,
+    "pe-w_et-0/0/3": <packets>
+  },
+  "delta": {
+    "pe-w_et-0/0/2": <delta>,
+    "pe-w_et-0/0/3": <delta>
+  },
+  "observed_ratio": <high_delta / low_delta>,
+  "expected_ratio": 4.0,
+  "tolerance_percent": 15
+}
+```
+
+The scorer's deep_verify probe parses this file and asserts `observed_ratio` is within ±15% of 4.0 (i.e., between 3.4 and 4.6). To produce the snapshots, query Junos `show interfaces et-0/0/2` and parse the `Output packets:` line. To generate the flows, exec into client-w with `nc -u -w0 -p $((20000+i)) 198.51.100.1 9999` in a 1000-iteration loop.
+
+**Artifact 4: `benchmark/hardening-functional.json`** — functional hardening proofs that go beyond the structural probes. Required keys:
+
+```json
+{
+  "snmpv3": {
+    "command": "snmpwalk -v3 -u <user> -a SHA -A <key> -x AES -X <key> -l authPriv 10.255.10.11 1.3.6.1.2.1.1.5",
+    "output": "<actual snmpwalk response showing sysName>",
+    "passed": true|false
+  },
+  "ntp_associations": {
+    "command": "show ntp associations",
+    "output": "<actual ntpq/show ntp output showing authenticated state>",
+    "passed": true|false
+  },
+  "bgp_md5": {
+    "command": "show bgp neighbor 10.255.0.1",
+    "output": "<actual auth-key state>",
+    "passed": true|false
+  }
+}
+```
+
+The snmpwalk should be run from a host container (e.g. `h1-w`) which has `snmpwalk` available in the netshoot image. If snmpwalk times out or fails, that's data — record `passed: false` with the actual output. The probe just checks that the file exists and has the three keys; honest failure is fine, but completely missing the artifact is not.
+
+**Commit cadence for Agent-Verify**: 4 separate commits, one per artifact, in this order:
+1. `verify: audit-report.md (control + data plane evidence)`
+2. `verify: wecmp-traffic-test.json (empirical 4:1 confirmed)`
+3. `verify: hardening-functional.json (snmpwalk + ntp + bgp)`
+4. `verify: results.json (final scorer output)`
+
+The fourth commit should be the **last** thing the main agent waits for before exiting iteration. If the scorer's `deep_verify` probe still reports any of the three artifacts as FAIL, fix the issue (regenerate the artifact with real content) and re-commit.
 
 ## Git workflow (mandatory — drives the Gource visualization)
 

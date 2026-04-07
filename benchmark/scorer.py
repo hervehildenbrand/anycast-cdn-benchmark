@@ -270,6 +270,100 @@ def _hardening_run(node: str, vendor: str, show_cmd: str) -> tuple[int, str]:
     return VENDOR_RUNNERS[vendor](node, show_cmd)
 
 
+def grade_deep_verify() -> tuple[list[dict], float, float]:
+    """Verify the Agent-Verify deep-verification artifacts exist and are real.
+
+    The deep-verify artifacts are produced by Agent-Verify after connectivity
+    + hardening converge. They are:
+
+      1. benchmark/audit-report.md      — control + data plane show evidence
+      2. benchmark/wecmp-traffic-test.json — empirical packet ratio measurement
+      3. benchmark/hardening-functional.json — snmpwalk + ntp + bgp functional probes
+
+    These artifacts are required for COMPLETE because the agent could otherwise
+    skip them. The probes check existence + non-trivial content + that the
+    expected fields/sections are present (not blank/fake artifacts).
+    """
+    results = []
+    earned = 0.0
+    total = 5.0
+    bench_dir = Path(__file__).parent
+
+    def add(name: str, passed: bool, evidence: str, pts: float) -> None:
+        nonlocal earned
+        actual = pts if passed else 0.0
+        earned += actual
+        results.append({
+            "category": "deep_verify",
+            "name": name,
+            "passed": passed,
+            "points": actual,
+            "max_points": pts,
+            "evidence": evidence[:200],
+        })
+
+    # 1. audit-report.md — control + data plane evidence (2 pts)
+    audit_path = bench_dir / "audit-report.md"
+    if not audit_path.exists():
+        add("audit-report.md exists with control+data plane evidence", False,
+            "file does not exist", 2.0)
+    else:
+        body = audit_path.read_text()
+        size_ok = len(body) >= 2000
+        # Look for evidence of actual show output across multiple devices
+        has_pe = bool(re.search(r"\bpe-w\b", body, re.IGNORECASE))
+        has_leaf = bool(re.search(r"\bl1-w\b", body, re.IGNORECASE))
+        has_evpn = bool(re.search(r"\bevpn\b", body, re.IGNORECASE))
+        has_show = bool(re.search(r"\bshow\b", body, re.IGNORECASE))
+        ok = size_ok and has_pe and has_leaf and has_evpn and has_show
+        add("audit-report.md exists with control+data plane evidence", ok,
+            f"size={len(body)} pe-w={has_pe} l1-w={has_leaf} evpn={has_evpn} show={has_show}",
+            2.0)
+
+    # 2. wecmp-traffic-test.json — empirical packet ratio (2 pts)
+    wecmp_path = bench_dir / "wecmp-traffic-test.json"
+    if not wecmp_path.exists():
+        add("wecmp-traffic-test.json with empirical 4:1 packet ratio", False,
+            "file does not exist", 2.0)
+    else:
+        try:
+            wecmp = json.loads(wecmp_path.read_text())
+            # Required fields: before/after counters per interface, and observed_ratio
+            has_before = "before" in wecmp or "snapshot_before" in wecmp
+            has_after = "after" in wecmp or "snapshot_after" in wecmp
+            ratio = wecmp.get("observed_ratio") or wecmp.get("ratio")
+            ratio_ok = (
+                isinstance(ratio, (int, float))
+                and 3.0 <= ratio <= 5.0
+            )
+            ok = has_before and has_after and ratio_ok
+            add("wecmp-traffic-test.json with empirical 4:1 packet ratio", ok,
+                f"before={has_before} after={has_after} ratio={ratio}", 2.0)
+        except Exception as e:
+            add("wecmp-traffic-test.json with empirical 4:1 packet ratio", False,
+                f"json parse error: {e}", 2.0)
+
+    # 3. hardening-functional.json — snmpwalk + ntp + bgp functional proofs (1 pt)
+    hf_path = bench_dir / "hardening-functional.json"
+    if not hf_path.exists():
+        add("hardening-functional.json with snmpwalk + ntp + bgp evidence", False,
+            "file does not exist", 1.0)
+    else:
+        try:
+            hf = json.loads(hf_path.read_text())
+            has_snmp = "snmpwalk" in hf or "snmpv3" in hf
+            has_ntp = "ntp" in hf or "ntp_associations" in hf
+            has_bgp = "bgp_md5" in hf or "bgp_authentication" in hf or "bgp" in hf
+            ok = has_snmp and has_ntp and has_bgp
+            add("hardening-functional.json with snmpwalk + ntp + bgp evidence", ok,
+                f"snmp={has_snmp} ntp={has_ntp} bgp={has_bgp}", 1.0)
+        except Exception as e:
+            add("hardening-functional.json with snmpwalk + ntp + bgp evidence", False,
+                f"json parse error: {e}", 1.0)
+
+    return results, earned, total
+
+
 def grade_hardening() -> tuple[list[dict], float, float]:
     """Run all 7 hardening probes (v2 — tightened, anti-gaming).
 
@@ -408,6 +502,7 @@ def main():
     conn_results, conn_earned, conn_max = grade_connectivity()
     hard_results, hard_earned, hard_max = grade_hardening()
     wecmp_results, wecmp_earned, wecmp_max = grade_wecmp()
+    deep_results, deep_earned, deep_max = grade_deep_verify()
 
     elapsed = time.time() - started
 
@@ -431,12 +526,21 @@ def main():
         suffix = f"  ({ev})" if ev else ""
         print(f"  [{mark}] {r['name']}{suffix}")
 
-    total_earned = conn_earned + hard_earned + wecmp_earned
-    total_max = conn_max + hard_max + wecmp_max
+    print()
+    print(f"--- Deep Verify ({deep_earned:.1f}/{deep_max:.1f}) ---")
+    for r in deep_results:
+        mark = "PASS" if r["passed"] else "FAIL"
+        ev = r.get("evidence", "")
+        suffix = f"  ({ev})" if ev else ""
+        print(f"  [{mark}] {r['name']}{suffix}")
+
+    total_earned = conn_earned + hard_earned + wecmp_earned + deep_earned
+    total_max = conn_max + hard_max + wecmp_max + deep_max
     complete = (
         conn_earned >= conn_max - 0.01
         and hard_earned >= hard_max - 0.01
         and wecmp_earned >= wecmp_max - 0.01
+        and deep_earned >= deep_max - 0.01
     )
 
     print()
@@ -469,6 +573,13 @@ def main():
             "pass_count": sum(1 for r in wecmp_results if r["passed"]),
             "total":      len(wecmp_results),
             "results":    wecmp_results,
+        },
+        "deep_verify": {
+            "earned": round(deep_earned, 1),
+            "max":    round(deep_max, 1),
+            "pass_count": sum(1 for r in deep_results if r["passed"]),
+            "total":      len(deep_results),
+            "results":    deep_results,
         },
         "total": {
             "earned":   round(total_earned, 1),
