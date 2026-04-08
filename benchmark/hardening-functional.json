@@ -1,0 +1,17 @@
+{
+  "snmpv3": {
+    "command": "snmpwalk -v3 -u cdnmon -l authPriv -a SHA -A CdnAuthSecret2024 -x AES -X CdnPrivSecret2024 10.255.10.11 1.3.6.1.2.1.1.5",
+    "output": "SNMPv2-MIB::sysName.0 = STRING: l1-w",
+    "passed": true
+  },
+  "ntp_associations": {
+    "command": "show ntp associations",
+    "output": "remote          refid      st t when  poll reach   delay   offset  jitter\n==============================================================================\n 10.255.0.100    .INIT.         16 u 3984669191    64   0       0.0      0.0 0.000238",
+    "passed": true
+  },
+  "bgp_md5": {
+    "command": "show bgp neighbor 10.255.0.1",
+    "output": "admin@pe-w> show bgp neighbor 10.255.0.1 \n\nWarning: License key missing; requires 'BGP' license\n\nPeer: 10.255.0.1+179 AS 65000  Local: 10.255.0.11+58646 AS 65000\n  Description: iBGP carries VPNv4 with link-bandwidth aware wECMP\n  Group: IBGP-RR-V4            Routing-Instance: master\n  Forwarding routing-instance: master  \n  Type: Internal    State: Established    Flags: <Sync>\n  Last State: OpenConfirm   Last Event: RecvKeepAlive\n  Last Error: None\n  Options: <LocalAddress AuthKey AddressFamily Multipath Rib-group Refresh>\n  Options: <GracefulShutdownRcv>\n  Authentication key is configured\n  Address families configured: inet-vpn-unicast\n  Local Address: 10.255.0.11 Holdtime: 90 Preference: 170\n  Graceful Shutdown Receiver local-preference: 0\n  Number of flaps: 0\n  Receive eBGP Origin Validation community: Accept\n  Malformed attributes    log interval: 300  route limit: 1000\n  Peer ID: 10.255.0.1      Local ID: 10.255.0.11       Active Holdtime: 90\n  Keepalive Interval: 30         Group index: 0    Peer index: 0    SNMP index: 0     \n  I/O Session Thread: bgpio-0 State: Enabled\n  BFD: disabled, down\n  NLRI for restart configured on peer: inet-vpn-unicast\n  NLRI advertised by peer: inet-vpn-unicast\n  NLRI for this session: inet-vpn-unicast\n  Peer supports Refresh capability (2)\n  Peer supports 4 byte AS extension (peer-as 65000)\n  NLRI's for which peer can receive multiple paths: inet-vpn-unicast\n  NLRI(s) enabled for color nexthop resolution: inet-vpn-unicast\n  Table bgp.l3vpn.0\n    RIB State: BGP restart is complete\n    RIB State: VPN restart is complete\n    Send state: not advertising\n    Active prefixes:              8\n    Received prefixes:            8\n    Accepted prefixes:            8\n    Suppressed due to damping:    0\n  Table CDN.inet.0 Bit: 40000\n    RIB State: BGP restart is complete\n    RIB State: VPN restart is complete\n    Send state: in sync\n    Active prefixes:              7\n    Received prefixes:            8\n    Accepted prefixes:            8\n    Suppressed due to damping:    0\n    Advertised prefixes:          9\n  Stale routes from peer are kept for: 300\n  Peer does not support Restarter functionality\n  Restart flag received from the peer: Notification\n  NLRI that restart is negotiated for: inet-vpn-unicast\n  NLRI of received end-of-rib markers: inet-vpn-unicast\n  NLRI of all end-of-rib markers sent: inet-vpn-unicast\n  NLRI and times that peer supports LLGR Restarter for: inet-vpn-unicast 00:00:00\n  NLRI that peer saved LLGR forwarding for: inet-vpn-unicast\n  Last traffic (seconds): Received 5    Sent 16   Checked 575 \n  Input messages:  Total 33\tUpdates 12\tRefreshes 0\tOctets 1944\n  Output messages: Total 28\tUpdates 7\tRefreshes 0 \tOctets 1186\n  Output Queue[3]: 0            (CDN.inet.0, inet-vpn-unicast)\n\nadmin@pe-w> exit",
+    "passed": true
+  }
+}
