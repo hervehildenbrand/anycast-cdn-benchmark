@@ -1,7 +1,7 @@
 {
   "lab": "anycast-cdn-hardmode",
-  "started": "2026-04-08T15:47:26.543520+00:00",
-  "elapsed_seconds": 36.7,
+  "started": "2026-04-08T16:08:01.807283+00:00",
+  "elapsed_seconds": 35.7,
   "connectivity": {
     "earned": 50.0,
     "max": 50.0,
@@ -19,7 +19,7 @@
         "evidence": [
           "--- 192.168.11.10 ping statistics ---",
           "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
-          "rtt min/avg/max/mdev = 4.658/7.803/12.861/3.611 ms"
+          "rtt min/avg/max/mdev = 6.461/7.924/9.406/1.202 ms"
         ]
       },
       {
@@ -33,7 +33,7 @@
         "evidence": [
           "--- 2001:db8:11::10 ping statistics ---",
           "3 packets transmitted, 3 received, 0% packet loss, time 2003ms",
-          "rtt min/avg/max/mdev = 5.346/5.588/5.838/0.200 ms"
+          "rtt min/avg/max/mdev = 5.903/9.469/12.820/2.827 ms"
         ]
       },
       {
@@ -47,7 +47,7 @@
         "evidence": [
           "--- 192.168.30.10 ping statistics ---",
           "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
-          "rtt min/avg/max/mdev = 14.781/17.023/20.371/2.412 ms"
+          "rtt min/avg/max/mdev = 94.072/101.798/106.884/5.553 ms"
         ]
       },
       {
@@ -61,7 +61,7 @@
         "evidence": [
           "--- 2001:db8:30::10 ping statistics ---",
           "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
-          "rtt min/avg/max/mdev = 14.607/18.588/22.696/3.303 ms"
+          "rtt min/avg/max/mdev = 75.079/76.866/80.385/2.488 ms"
         ]
       },
       {
@@ -74,8 +74,8 @@
         "max_points": 6.25,
         "evidence": [
           "--- 198.51.100.1 ping statistics ---",
-          "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
-          "rtt min/avg/max/mdev = 2.350/3.146/4.623/1.045 ms"
+          "3 packets transmitted, 3 received, 0% packet loss, time 2001ms",
+          "rtt min/avg/max/mdev = 2.024/31.211/71.864/29.642 ms"
         ]
       },
       {
@@ -89,7 +89,7 @@
         "evidence": [
           "--- 2001:db8:cafe::1 ping statistics ---",
           "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
-          "rtt min/avg/max/mdev = 1.654/2.622/3.987/0.992 ms"
+          "rtt min/avg/max/mdev = 17.540/32.700/59.761/19.181 ms"
         ]
       },
       {
@@ -103,7 +103,7 @@
         "evidence": [
           "--- 198.51.100.1 ping statistics ---",
           "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
-          "rtt min/avg/max/mdev = 1.700/2.740/4.542/1.279 ms"
+          "rtt min/avg/max/mdev = 1.835/4.941/8.109/2.561 ms"
         ]
       },
       {
@@ -117,7 +117,7 @@
         "evidence": [
           "--- 2001:db8:cafe::1 ping statistics ---",
           "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
-          "rtt min/avg/max/mdev = 2.078/3.487/6.260/1.960 ms"
+          "rtt min/avg/max/mdev = 1.763/3.912/8.103/2.963 ms"
         ]
       }
     ]
@@ -254,7 +254,7 @@
         "passed": false,
         "points": 0.0,
         "max_points": 2.0,
-        "evidence": "deltas et-0/0/2=1 et-0/0/3=237 ratio=237.000 (target 3.4-4.6)"
+        "evidence": "one DCI link saw zero traffic: {'et-0/0/2': 4596, 'et-0/0/3': 0}"
       },
       {
         "category": "deep_verify",
