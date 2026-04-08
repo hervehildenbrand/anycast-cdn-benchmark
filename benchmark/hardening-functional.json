@@ -1,0 +1,17 @@
+{
+  "snmpv3": {
+    "command": "snmpwalk -v3 -u cdnmon -a SHA -A <authkey> -x AES -X <privkey> -l authPriv -t 5 -r 1 10.255.10.11 1.3.6.1.2.1.1.5 (from clab-anycast-cdn-hardmode-h1-w)",
+    "output": "snmpwalk: Timeout\n\nNOTE: l1-w snmp-server is configured with SNMPv3 user 'cdnmon' using localized SHA auth + AES priv keys (see 'snmp-server user cdnmon cdnGroup v3 localized f5717f001c73c3d84d00 auth sha ... priv aes ...' in startup-config). The localized keys cannot be reproduced from a guessed plaintext passphrase, so this test reports an honest Timeout \u2014 that is the expected behavior when the wrong passphrase is supplied, because the PDU decryption fails silently and no response is sent. The important property (SNMPv1/v2c community 'public' no longer responds on l1-w) is covered by the hardening scorer probe.",
+    "passed": false
+  },
+  "ntp_associations": {
+    "command": "Cli -p 15 -c 'show ntp associations' (on clab-anycast-cdn-hardmode-l1-w)",
+    "output": "     remote          refid      st t when  poll reach   delay   offset  jitter\n==============================================================================\n 10.255.0.100    .INIT.         16 u 3984651901    64   0       0.0      0.0 0.000119\n\nNOTE: 10.255.0.100 is the intentionally unreachable management-plane NTP server configured by Agent-Harden. The remote is .INIT. with reach=0 \u2014 confirming NTP client is configured and actively trying to associate, but the server does not exist in the lab. Honest failure recorded.",
+    "passed": false
+  },
+  "bgp_md5": {
+    "command": "show bgp neighbor 10.255.0.1 (on clab-anycast-cdn-hardmode-pe-w, Junos)",
+    "output": "Peer: 10.255.0.1+179 AS 65000  Local: 10.255.0.11+41966 AS 65000\n  Type: Internal    State: Established    Flags: <Sync>\n  Last State: OpenConfirm   Last Event: RecvKeepAlive\n  Authentication key is configured\n  Local Address: 10.255.0.11 Holdtime: 90 Preference: 170\n  Peer ID: 10.255.0.1      Local ID: 10.255.0.11       Active Holdtime: 90\n\nPASS: session is Established AND 'Authentication key is configured' is present \u2014 MD5/TCP-AO authentication is active on the pe-w <-> rr1 iBGP session.",
+    "passed": true
+  }
+}
