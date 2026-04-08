@@ -149,29 +149,42 @@ def _probe_syslog(run) -> tuple[bool, str]:
     return False, f"host={has_host} source={has_source}"
 
 
-def _probe_storm_control(run) -> tuple[bool, str]:
-    """Storm control — must be a real `storm-control <type> level <N>` command
-    on the host port, NOT a description line containing the substring."""
-    rc, out = run("l1-w", "arista", "show running-config interfaces Ethernet3")
-    # Anchored: line must start with whitespace then storm-control then a type word
-    # then "level". Description lines like "description storm-control ..." won't match.
-    has_real = bool(re.search(
-        r"^\s+storm-control\s+(broadcast|multicast|unknown-unicast)\s+level\s+\S+",
+def _probe_bgp_maxroutes(run) -> tuple[bool, str]:
+    """BGP maximum-routes / max-prefix on a border-leaf — DoS protection.
+
+    This replaces the v1/v2 storm-control probe, which run #4 proved is
+    platform-blocked on cEOSLab 4.35.1F: storm-control is a hardware feature
+    requiring a switching ASIC, and the cEOSLab CLI parser rejects every
+    syntactic variant with "% Unavailable command (not supported on this
+    hardware platform)". The libraries (libStormControl*.so) ship with the
+    image but no agent binds to them because the hardware capability bit
+    is unset.
+
+    BGP max-routes is in the same hardening *category* (resource-exhaustion
+    protection) but is implemented entirely at the BGP control plane, which
+    cEOSLab supports cleanly. Verify that bl-w has `maximum-routes` set on
+    at least one DCI eBGP neighbor — a real DoS-mitigation knob with no
+    place for description tricks (the value must be an integer).
+    """
+    rc, out = run("bl-w", "arista", "show running-config | section bgp")
+    # Anchored: line must start with whitespace then `neighbor <ip> maximum-routes <N>`
+    has_max = bool(re.search(
+        r"^\s+neighbor \S+ maximum-routes \d+",
         out, re.MULTILINE))
-    if has_real:
-        return True, "real storm-control command on Ethernet3"
-    return False, "no storm-control <type> level command on Ethernet3"
+    if has_max:
+        return True, "neighbor maximum-routes configured on bl-w"
+    return False, "no neighbor maximum-routes on bl-w"
 
 
 # Each entry: (name, max_points, probe_function)
 HARDENING_PROBES = [
-    ("BGP MD5 (PE iBGP)",                 3.6, _probe_bgp_md5),
-    ("ISIS auth (PE)",                    3.6, _probe_isis_auth),
-    ("SNMPv3 (Arista leaf)",              3.6, _probe_snmpv3),
-    ("NTP auth (Arista leaf)",            3.6, _probe_ntp_auth),
-    ("AAA (Arista leaf)",                 3.6, _probe_aaa),
-    ("Syslog forwarding (Arista leaf)",   3.6, _probe_syslog),
-    ("Storm control (Arista leaf host)",  3.4, _probe_storm_control),
+    ("BGP MD5 (PE iBGP)",                  3.6, _probe_bgp_md5),
+    ("ISIS auth (PE)",                     3.6, _probe_isis_auth),
+    ("SNMPv3 (Arista leaf)",               3.6, _probe_snmpv3),
+    ("NTP auth (Arista leaf)",             3.6, _probe_ntp_auth),
+    ("AAA (Arista leaf)",                  3.6, _probe_aaa),
+    ("Syslog forwarding (Arista leaf)",    3.6, _probe_syslog),
+    ("BGP max-routes (border-leaf DoS)",   3.4, _probe_bgp_maxroutes),
 ]
 
 

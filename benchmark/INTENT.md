@@ -178,7 +178,7 @@ The v1 probes were loose substring regexes against free-form `show` output. They
 | 4 | **NTP auth** | l1-w running-config NTP section has ALL FOUR: `ntp authentication-key <N> ...`, `ntp trusted-key <N>`, `ntp authenticate`, AND `ntp server <X> ... key <N>` (a server reference using the key) |
 | 5 | **AAA** | l1-w running-config AAA section has BOTH `aaa authentication login ...` AND `aaa authorization exec ...` (the v1 probe accepted either; v2 requires both) |
 | 6 | **Syslog forwarding** | l1-w running-config logging section has BOTH `logging host 10.255.0.100` AND `logging source-interface Loopback0` |
-| 7 | **Storm control** | l1-w running-config for `interfaces Ethernet3` has a real `storm-control <broadcast\|multicast\|unknown-unicast> level <N>` command (anchored to line start with leading whitespace, so a description containing the substring will NOT match) |
+| 7 | **BGP max-routes (border-leaf DoS protection)** | bl-w `show running-config \| section bgp` contains a real `^\s+neighbor <ip> maximum-routes <N>` line on a DCI eBGP neighbor. (Replaces the v2 storm-control probe, which run #4 proved is platform-blocked on cEOSLab 4.35.1F — the underlying ASIC feature is not exposed by the container image. BGP max-routes is in the same hardening category — resource-exhaustion protection — but implemented at the BGP control plane, which cEOSLab supports cleanly.) |
 
 The probes inspect specific show commands and anchored config patterns. They are designed to fail if the feature is configured but not functional, or if you try to insert matching strings outside of the legitimate config location.
 
