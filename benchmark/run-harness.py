@@ -413,11 +413,43 @@ def main():
 
         # After claude returns, run the scorer
         score = run_scorer()
+        # Capture per-probe failure detail so the harness log can later
+        # distinguish "agent fixed a real bug" iterations from "scorer noise"
+        # iterations. We snapshot only failing probes (name + evidence) to
+        # keep the log compact.
+        failures: list[dict] = []
+        for cat_name in ("connectivity", "hardening", "wecmp", "deep_verify"):
+            cat = score.get(cat_name) or {}
+            for r in cat.get("results", []):
+                if not r.get("passed"):
+                    failures.append({
+                        "category": cat_name,
+                        "name":     r.get("name"),
+                        "evidence": r.get("evidence"),
+                    })
+        # Tally git commits authored on this branch since the previous
+        # iteration boundary. A retry that contains only Verify/Architect
+        # commits is probably scorer noise; one with WAN/DC/Harden commits
+        # is a real config-change retry.
+        config_change_authors = {
+            "Agent-WAN", "Agent-DC-West", "Agent-DC-East", "Agent-Harden",
+        }
+        try:
+            git_log = subprocess.run(
+                ["git", "log", "--format=%an", f"-{50}"],
+                cwd=str(PROJECT_ROOT), capture_output=True, text=True,
+            )
+            recent_authors = set(git_log.stdout.split())
+        except Exception:
+            recent_authors = set()
+        had_config_change = bool(recent_authors & config_change_authors)
         log["iterations"].append({
-            "n":         iteration,
-            "claude_rc": rc,
-            "score":     score.get("total", {}),
-            "elapsed":   round(time.time() - started, 1),
+            "n":               iteration,
+            "claude_rc":       rc,
+            "score":           score.get("total", {}),
+            "elapsed":         round(time.time() - started, 1),
+            "failures":        failures,
+            "had_config_change": had_config_change,
         })
 
         if score.get("total", {}).get("complete"):
@@ -455,6 +487,24 @@ def main():
     else:
         iter_pts = 0
     log["iteration_efficiency_points"] = iter_pts
+
+    # v4.1 — classify each retry as 'real_fix' (the iteration committed
+    # config changes via WAN/DC/Harden authors) vs 'noise' (only Verify
+    # or Architect commits, suggesting the agent didn't change anything
+    # functional and the retry was caused by transient probe noise).
+    # The first iteration is never a "retry" — it's the initial build.
+    breakdown = []
+    for it in log["iterations"]:
+        if it["n"] == 1:
+            breakdown.append({"iter": 1, "kind": "initial_build"})
+            continue
+        kind = "real_fix" if it.get("had_config_change") else "noise"
+        breakdown.append({
+            "iter": it["n"],
+            "kind": kind,
+            "complete_at_end": bool(it.get("score", {}).get("complete")),
+        })
+    log["iteration_efficiency_breakdown"] = breakdown
 
     # Run the OUT-OF-TREE hidden holdout scorer exactly once at end-of-run.
     # Output is appended to the harness log only — never to scorer-last.json
