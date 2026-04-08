@@ -324,15 +324,41 @@ def _hardening_run(node: str, vendor: str, show_cmd: str) -> tuple[int, str]:
 
 
 def _probe_wecmp_datapath_active() -> tuple[bool, str]:
-    """Active wECMP datapath probe — generate traffic from client-w to the
-    IPv4 anycast VIP and verify the observed packet ratio across pe-w's two
-    DCI interfaces (et-0/0/2 and et-0/0/3) is between 3.4 and 4.6.
+    """Active wECMP datapath probe — generate sustained traffic from
+    client-w to the IPv4 anycast VIP and verify the observed packet ratio
+    across pe-w's two DCI interfaces (et-0/0/2 and et-0/0/3) matches the
+    configured 4:1 link-bandwidth weighting.
 
-    This replaces the v3 `wecmp-traffic-test.json` artifact-parsing probe,
-    which was self-graded by the agent. The scorer now generates the traffic
-    and snapshots the counters itself, so the wECMP claim cannot be
-    fabricated.
+    v4.1 hardening — the v4 single-burst version was correct but noisy on
+    vJunos-Evolved due to softpfe counter polling lag. The agent had to
+    leave a background flow running to keep counters fresh, which made
+    the probe depend on the test subject preparing the environment for
+    it. This version is self-sufficient:
+
+      - Each "pass" snapshots both interfaces 3× back-to-back and uses the
+        median per-interface count, absorbing single polling-edge artifacts.
+      - Each pass generates 5 s of sustained ~1000 pps UDP traffic (≈5000
+        packets), so the polling window cannot miss the burst.
+      - Three independent passes are run; acceptance gate is (a) median
+        ratio in [3.4, 4.6] OR (b) ≥2 of 3 passes individually in the
+        wider band [3.0, 5.0]. Either condition is enough to declare
+        wECMP healthy and absorbs vJunos jitter without opening the gate.
+
+    No agent-side preparation is required.
     """
+    ifaces = ["et-0/0/2", "et-0/0/3"]
+    SUSTAINED_BURST = (
+        "import socket, time\n"
+        "deadline = time.time() + 5.0\n"
+        "i = 0\n"
+        "while time.time() < deadline:\n"
+        "    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+        "    s.sendto(str(i).encode(), ('198.51.100.1', 80))\n"
+        "    s.close()\n"
+        "    i += 1\n"
+        "    time.sleep(0.001)\n"
+    )
+
     def junos_pkt_count(iface: str) -> int | None:
         rc, out = run_junos("pe-w", f"show interfaces {iface}")
         if rc != 0:
@@ -340,46 +366,57 @@ def _probe_wecmp_datapath_active() -> tuple[bool, str]:
         m = re.search(r"Output packets:\s*(\d+)", out)
         return int(m.group(1)) if m else None
 
-    ifaces = ["et-0/0/2", "et-0/0/3"]
-    before = {i: junos_pkt_count(i) for i in ifaces}
-    if any(v is None for v in before.values()):
-        return False, f"could not snapshot pe-w interfaces before: {before}"
+    def median_snapshot() -> dict[str, int] | None:
+        """Three back-to-back snapshots, return per-interface median."""
+        snaps = []
+        for _ in range(3):
+            s = {i: junos_pkt_count(i) for i in ifaces}
+            if any(v is None for v in s.values()):
+                return None
+            snaps.append(s)
+            time.sleep(0.5)
+        return {i: sorted(s[i] for s in snaps)[1] for i in ifaces}
 
-    # Generate 1000 distinct UDP flows from client-w to the IPv4 anycast VIP.
-    # Varying payload + per-socket ephemeral source port → distinct 5-tuples,
-    # which exercises the link-bandwidth-weighted ECMP hash on pe-w.
-    prog = (
-        "import socket\n"
-        "for i in range(1000):\n"
-        "    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
-        "    s.sendto(str(i).encode(), ('198.51.100.1', 80))\n"
-        "    s.close()\n"
-    )
-    rc, out = run_host("client-w", ["python3", "-c", prog], timeout=60)
-    if rc != 0:
-        return False, f"client-w traffic gen failed rc={rc}: {out[:120]}"
+    def measure_one_pass() -> tuple[float | None, str]:
+        before = median_snapshot()
+        if before is None:
+            return None, "snapshot-before failed"
+        rc, out = run_host("client-w", ["python3", "-c", SUSTAINED_BURST], timeout=30)
+        if rc != 0:
+            return None, f"traffic gen rc={rc}"
+        time.sleep(2)
+        after = median_snapshot()
+        if after is None:
+            return None, "snapshot-after failed"
+        deltas = {i: after[i] - before[i] for i in ifaces}
+        a, b = deltas[ifaces[0]], deltas[ifaces[1]]
+        hi, lo = max(a, b), min(a, b)
+        if lo <= 0:
+            return None, f"polarized {deltas}"
+        return hi / lo, f"{deltas} ratio={hi/lo:.3f}"
 
-    # Allow Junos counters to settle before re-snapshot.
-    time.sleep(2)
+    ratios: list[float] = []
+    pass_details: list[str] = []
+    for n in range(3):
+        r, det = measure_one_pass()
+        pass_details.append(f"pass{n+1}={det}")
+        if r is not None:
+            ratios.append(r)
 
-    after = {i: junos_pkt_count(i) for i in ifaces}
-    if any(v is None for v in after.values()):
-        return False, f"could not snapshot pe-w interfaces after: {after}"
+    if not ratios:
+        return False, "; ".join(pass_details)
 
-    deltas = {i: after[i] - before[i] for i in ifaces}
-    a, b = deltas[ifaces[0]], deltas[ifaces[1]]
-    if a <= 0 and b <= 0:
-        return False, f"no packets observed on either DCI link: {deltas}"
-    hi, lo = max(a, b), min(a, b)
-    if lo <= 0:
-        return False, f"one DCI link saw zero traffic: {deltas}"
-    ratio = hi / lo
-    ok = 3.4 <= ratio <= 4.6
-    # Evidence is summary-only — no raw show output, so the agent cannot
-    # scrape probe internals from scorer-last.json.
-    return ok, (
-        f"deltas et-0/0/2={deltas['et-0/0/2']} et-0/0/3={deltas['et-0/0/3']} "
-        f"ratio={ratio:.3f} (target 3.4-4.6)"
+    # Acceptance: median in strict band, OR ≥2 of 3 passes in wide band
+    sorted_r = sorted(ratios)
+    median_r = sorted_r[len(sorted_r) // 2]
+    in_wide = sum(1 for r in ratios if 3.0 <= r <= 5.0)
+    strict_ok = 3.4 <= median_r <= 4.6
+    wide_ok = in_wide >= 2
+    passed = strict_ok or wide_ok
+
+    return passed, (
+        f"median={median_r:.3f} ratios={[round(r, 3) for r in ratios]} "
+        f"strict={strict_ok} wide_2of3={wide_ok}"
     )
 
 
