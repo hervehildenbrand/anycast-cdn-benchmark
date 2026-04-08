@@ -1,7 +1,7 @@
 {
   "lab": "anycast-cdn-hardmode",
-  "started": "2026-04-08T16:08:01.807283+00:00",
-  "elapsed_seconds": 35.7,
+  "started": "2026-04-08T16:41:24.921325+00:00",
+  "elapsed_seconds": 35.6,
   "connectivity": {
     "earned": 50.0,
     "max": 50.0,
@@ -18,8 +18,8 @@
         "max_points": 6.25,
         "evidence": [
           "--- 192.168.11.10 ping statistics ---",
-          "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
-          "rtt min/avg/max/mdev = 6.461/7.924/9.406/1.202 ms"
+          "3 packets transmitted, 3 received, 0% packet loss, time 2003ms",
+          "rtt min/avg/max/mdev = 4.951/8.404/12.419/3.074 ms"
         ]
       },
       {
@@ -33,7 +33,7 @@
         "evidence": [
           "--- 2001:db8:11::10 ping statistics ---",
           "3 packets transmitted, 3 received, 0% packet loss, time 2003ms",
-          "rtt min/avg/max/mdev = 5.903/9.469/12.820/2.827 ms"
+          "rtt min/avg/max/mdev = 6.714/9.582/12.558/2.386 ms"
         ]
       },
       {
@@ -46,8 +46,8 @@
         "max_points": 6.25,
         "evidence": [
           "--- 192.168.30.10 ping statistics ---",
-          "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
-          "rtt min/avg/max/mdev = 94.072/101.798/106.884/5.553 ms"
+          "3 packets transmitted, 3 received, 0% packet loss, time 2003ms",
+          "rtt min/avg/max/mdev = 14.753/18.351/22.549/3.210 ms"
         ]
       },
       {
@@ -61,7 +61,7 @@
         "evidence": [
           "--- 2001:db8:30::10 ping statistics ---",
           "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
-          "rtt min/avg/max/mdev = 75.079/76.866/80.385/2.488 ms"
+          "rtt min/avg/max/mdev = 16.520/18.313/19.557/1.299 ms"
         ]
       },
       {
@@ -74,8 +74,8 @@
         "max_points": 6.25,
         "evidence": [
           "--- 198.51.100.1 ping statistics ---",
-          "3 packets transmitted, 3 received, 0% packet loss, time 2001ms",
-          "rtt min/avg/max/mdev = 2.024/31.211/71.864/29.642 ms"
+          "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
+          "rtt min/avg/max/mdev = 8.380/9.326/10.559/0.912 ms"
         ]
       },
       {
@@ -88,8 +88,8 @@
         "max_points": 6.25,
         "evidence": [
           "--- 2001:db8:cafe::1 ping statistics ---",
-          "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
-          "rtt min/avg/max/mdev = 17.540/32.700/59.761/19.181 ms"
+          "3 packets transmitted, 3 received, 0% packet loss, time 2003ms",
+          "rtt min/avg/max/mdev = 1.181/4.810/10.848/4.298 ms"
         ]
       },
       {
@@ -103,7 +103,7 @@
         "evidence": [
           "--- 198.51.100.1 ping statistics ---",
           "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
-          "rtt min/avg/max/mdev = 1.835/4.941/8.109/2.561 ms"
+          "rtt min/avg/max/mdev = 1.736/4.388/7.408/2.330 ms"
         ]
       },
       {
@@ -117,7 +117,7 @@
         "evidence": [
           "--- 2001:db8:cafe::1 ping statistics ---",
           "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
-          "rtt min/avg/max/mdev = 1.763/3.912/8.103/2.963 ms"
+          "rtt min/avg/max/mdev = 1.712/3.085/5.374/1.629 ms"
         ]
       }
     ]
@@ -235,9 +235,9 @@
     ]
   },
   "deep_verify": {
-    "earned": 3.0,
+    "earned": 5.0,
     "max": 5.0,
-    "pass_count": 2,
+    "pass_count": 3,
     "total": 3,
     "results": [
       {
@@ -251,10 +251,10 @@
       {
         "category": "deep_verify",
         "name": "active wECMP datapath probe (scorer-generated traffic)",
-        "passed": false,
-        "points": 0.0,
+        "passed": true,
+        "points": 2.0,
         "max_points": 2.0,
-        "evidence": "one DCI link saw zero traffic: {'et-0/0/2': 4596, 'et-0/0/3': 0}"
+        "evidence": "deltas et-0/0/2=1725 et-0/0/3=424 ratio=4.068 (target 3.4-4.6)"
       },
       {
         "category": "deep_verify",
@@ -267,9 +267,9 @@
     ]
   },
   "total": {
-    "earned": 83.0,
+    "earned": 85.0,
     "max": 85.0,
-    "complete": false
+    "complete": true
   },
   "baseline_only": false
 }
