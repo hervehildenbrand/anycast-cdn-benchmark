@@ -1,0 +1,275 @@
+{
+  "lab": "anycast-cdn-hardmode",
+  "started": "2026-04-08T20:33:21.420506+00:00",
+  "elapsed_seconds": 114.6,
+  "connectivity": {
+    "earned": 50.0,
+    "max": 50.0,
+    "pass_count": 8,
+    "total": 8,
+    "results": [
+      {
+        "category": "connectivity",
+        "name": "intra-DC v4 inter-VLAN (h1-w \u2192 h2-w)",
+        "host": "h1-w",
+        "command": "ping -c3 -W2 192.168.11.10",
+        "passed": true,
+        "points": 6.25,
+        "max_points": 6.25,
+        "evidence": [
+          "--- 192.168.11.10 ping statistics ---",
+          "3 packets transmitted, 3 received, 0% packet loss, time 2003ms",
+          "rtt min/avg/max/mdev = 5.788/8.562/11.616/2.387 ms"
+        ]
+      },
+      {
+        "category": "connectivity",
+        "name": "intra-DC v6 inter-VLAN (h1-w \u2192 h2-w)",
+        "host": "h1-w",
+        "command": "ping -6 -c3 -W2 2001:db8:11::10",
+        "passed": true,
+        "points": 6.25,
+        "max_points": 6.25,
+        "evidence": [
+          "--- 2001:db8:11::10 ping statistics ---",
+          "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
+          "rtt min/avg/max/mdev = 6.204/7.484/9.279/1.307 ms"
+        ]
+      },
+      {
+        "category": "connectivity",
+        "name": "cross-DC v4 (h1-w \u2192 h1-e)",
+        "host": "h1-w",
+        "command": "ping -c3 -W2 192.168.30.10",
+        "passed": true,
+        "points": 6.25,
+        "max_points": 6.25,
+        "evidence": [
+          "--- 192.168.30.10 ping statistics ---",
+          "3 packets transmitted, 3 received, 0% packet loss, time 2003ms",
+          "rtt min/avg/max/mdev = 14.255/16.533/17.675/1.611 ms"
+        ]
+      },
+      {
+        "category": "connectivity",
+        "name": "cross-DC v6 (h1-w \u2192 h1-e)",
+        "host": "h1-w",
+        "command": "ping -6 -c3 -W2 2001:db8:30::10",
+        "passed": true,
+        "points": 6.25,
+        "max_points": 6.25,
+        "evidence": [
+          "--- 2001:db8:30::10 ping statistics ---",
+          "3 packets transmitted, 3 received, 0% packet loss, time 2003ms",
+          "rtt min/avg/max/mdev = 15.765/17.554/21.012/2.445 ms"
+        ]
+      },
+      {
+        "category": "connectivity",
+        "name": "client-w \u2192 anycast v4",
+        "host": "client-w",
+        "command": "ping -c3 -W2 198.51.100.1",
+        "passed": true,
+        "points": 6.25,
+        "max_points": 6.25,
+        "evidence": [
+          "--- 198.51.100.1 ping statistics ---",
+          "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
+          "rtt min/avg/max/mdev = 1.370/4.048/6.470/2.089 ms"
+        ]
+      },
+      {
+        "category": "connectivity",
+        "name": "client-w \u2192 anycast v6",
+        "host": "client-w",
+        "command": "ping -6 -c3 -W2 2001:db8:cafe::1",
+        "passed": true,
+        "points": 6.25,
+        "max_points": 6.25,
+        "evidence": [
+          "--- 2001:db8:cafe::1 ping statistics ---",
+          "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
+          "rtt min/avg/max/mdev = 1.533/4.065/8.539/3.172 ms"
+        ]
+      },
+      {
+        "category": "connectivity",
+        "name": "client-e \u2192 anycast v4",
+        "host": "client-e",
+        "command": "ping -c3 -W2 198.51.100.1",
+        "passed": true,
+        "points": 6.25,
+        "max_points": 6.25,
+        "evidence": [
+          "--- 198.51.100.1 ping statistics ---",
+          "3 packets transmitted, 3 received, 0% packet loss, time 2002ms",
+          "rtt min/avg/max/mdev = 1.331/3.054/5.430/1.735 ms"
+        ]
+      },
+      {
+        "category": "connectivity",
+        "name": "client-e \u2192 anycast v6",
+        "host": "client-e",
+        "command": "ping -6 -c3 -W2 2001:db8:cafe::1",
+        "passed": true,
+        "points": 6.25,
+        "max_points": 6.25,
+        "evidence": [
+          "--- 2001:db8:cafe::1 ping statistics ---",
+          "3 packets transmitted, 3 received, 0% packet loss, time 2003ms",
+          "rtt min/avg/max/mdev = 1.784/17.805/48.765/21.896 ms"
+        ]
+      }
+    ]
+  },
+  "hardening": {
+    "earned": 25.0,
+    "max": 25.0,
+    "pass_count": 7,
+    "total": 7,
+    "results": [
+      {
+        "category": "hardening",
+        "name": "BGP MD5 (PE iBGP)",
+        "passed": true,
+        "points": 3.6,
+        "max_points": 3.6,
+        "evidence": "key in protocols bgp + session Established"
+      },
+      {
+        "category": "hardening",
+        "name": "ISIS auth (PE)",
+        "passed": true,
+        "points": 3.6,
+        "max_points": 3.6,
+        "evidence": "hello-authentication-key set + no-authentication-check absent + no deactivate shadow"
+      },
+      {
+        "category": "hardening",
+        "name": "SNMPv3 (Arista leaf)",
+        "passed": true,
+        "points": 3.6,
+        "max_points": 3.6,
+        "evidence": "snmpv3 user with auth+priv exists"
+      },
+      {
+        "category": "hardening",
+        "name": "NTP auth (Arista leaf)",
+        "passed": true,
+        "points": 3.6,
+        "max_points": 3.6,
+        "evidence": "key+trusted+authenticate+server-with-key all present"
+      },
+      {
+        "category": "hardening",
+        "name": "AAA (Arista leaf)",
+        "passed": true,
+        "points": 3.6,
+        "max_points": 3.6,
+        "evidence": "both aaa authentication login and aaa authorization exec set"
+      },
+      {
+        "category": "hardening",
+        "name": "Syslog forwarding (Arista leaf)",
+        "passed": true,
+        "points": 3.6,
+        "max_points": 3.6,
+        "evidence": "host + source-interface both set"
+      },
+      {
+        "category": "hardening",
+        "name": "BGP max-routes (border-leaf DoS)",
+        "passed": true,
+        "points": 3.4,
+        "max_points": 3.4,
+        "evidence": "4 neighbor(s) with enforced maximum-routes"
+      }
+    ]
+  },
+  "wecmp": {
+    "earned": 5.0,
+    "max": 5.0,
+    "pass_count": 5,
+    "total": 5,
+    "results": [
+      {
+        "category": "wecmp",
+        "name": "bl-w advertises \u22652 distinct link-bandwidth values on DCI",
+        "passed": true,
+        "points": 1.0,
+        "max_points": 1.0,
+        "evidence": "lbw values found: [1000000, 4000000]"
+      },
+      {
+        "category": "wecmp",
+        "name": "bl-w lbw ratio is 4:1 (\u00b110%)",
+        "passed": true,
+        "points": 1.0,
+        "max_points": 1.0,
+        "evidence": "min=1000000 max=4000000 ratio=4.00"
+      },
+      {
+        "category": "wecmp",
+        "name": "bl-e advertises \u22652 distinct link-bandwidth values on DCI",
+        "passed": true,
+        "points": 1.0,
+        "max_points": 1.0,
+        "evidence": "lbw values found: [1000000, 4000000]"
+      },
+      {
+        "category": "wecmp",
+        "name": "bl-e lbw ratio is 4:1 (\u00b110%)",
+        "passed": true,
+        "points": 1.0,
+        "max_points": 1.0,
+        "evidence": "min=1000000 max=4000000 ratio=4.00"
+      },
+      {
+        "category": "wecmp",
+        "name": "\u22651 PE honors link-bandwidth (Junos `bgp-multipath link-bandwidth`)",
+        "passed": true,
+        "points": 1.0,
+        "max_points": 1.0,
+        "evidence": "pe-w=True pe-e=True"
+      }
+    ]
+  },
+  "deep_verify": {
+    "earned": 5.0,
+    "max": 5.0,
+    "pass_count": 3,
+    "total": 3,
+    "results": [
+      {
+        "category": "deep_verify",
+        "name": "audit-report.md exists with control+data plane evidence",
+        "passed": true,
+        "points": 2.0,
+        "max_points": 2.0,
+        "evidence": "size=49960 pe-w=True l1-w=True evpn=True show=True"
+      },
+      {
+        "category": "deep_verify",
+        "name": "active wECMP datapath probe (scorer-generated traffic)",
+        "passed": true,
+        "points": 2.0,
+        "max_points": 2.0,
+        "evidence": "median=4.130 ratios=[4.13, 4.146, 2.598] strict=True wide_2of3=True"
+      },
+      {
+        "category": "deep_verify",
+        "name": "hardening-functional.json with snmpwalk + ntp + bgp evidence",
+        "passed": true,
+        "points": 1.0,
+        "max_points": 1.0,
+        "evidence": "snmp=True ntp=True bgp=True"
+      }
+    ]
+  },
+  "total": {
+    "earned": 85.0,
+    "max": 85.0,
+    "complete": true
+  },
+  "baseline_only": false
+}
