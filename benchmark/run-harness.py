@@ -23,11 +23,16 @@ Usage:
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Allow `from scorer import ...` so validate_blocker() can reuse the live
+# vendor exec helpers (no duplicate subprocess plumbing here).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BENCHMARK_DIR = PROJECT_ROOT / "benchmark"
@@ -203,23 +208,152 @@ def run_scorer() -> dict:
     return json.loads(SCORER_LAST.read_text())
 
 
-def validate_blocker() -> bool:
-    """Check if benchmark/blocker.md exists and looks legitimate.
+# Compiled regexes used by the live-diff blocker validator. A line is
+# dropped from BOTH the claimed output and the live output before
+# comparison if it matches any of these patterns. Counter drift is
+# absorbed by the 80% match threshold below, NOT by aggressive line
+# stripping — IPv6 addresses, AS numbers, and prefix counts contain long
+# digit runs and must be preserved.
+_DYNAMIC_LINE_PATTERNS = [
+    re.compile(r"\d{2}:\d{2}:\d{2}"),                          # clock timestamps
+    re.compile(r"\d{4}-\d{2}-\d{2}"),                          # ISO dates
+    re.compile(r"\buptime\b", re.IGNORECASE),
+    re.compile(r"\blast change\b", re.IGNORECASE),
+    re.compile(r"\bpid\b", re.IGNORECASE),
+    re.compile(r"\bprocess id\b", re.IGNORECASE),
+    re.compile(r"seq(uence)?\s*num", re.IGNORECASE),
+]
 
-    Acceptance criteria (kept loose for v1):
-      - file exists, > 200 chars
-      - contains the words 'show' and 'output' or 'evidence' (suggesting copy-pasted show output)
-      - contains the words 'kernel', 'image', or 'platform' (suggesting platform-level cause)
+# Allow only safe characters in the blocker `Command:` field; the orchestrator
+# will exec this string against a containerlab node so shell metacharacters
+# must be rejected before any subprocess call.
+_SAFE_NODE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_UNSAFE_CMD_RE = re.compile(r"[;|&`$()<>]")
+
+
+def _filter_dynamic(text: str) -> list[str]:
+    """Normalize and drop dynamic lines from `text`. Returns the surviving
+    non-empty lines, with internal whitespace runs collapsed and trimmed."""
+    out: list[str] = []
+    for raw in text.splitlines():
+        if any(p.search(raw) for p in _DYNAMIC_LINE_PATTERNS):
+            continue
+        norm = re.sub(r"\s+", " ", raw).strip()
+        if norm:
+            out.append(norm)
+    return out
+
+
+def _parse_blocker(body: str) -> tuple[str, str, str] | None:
+    """Parse the structured blocker.md format into (node, command, claimed_output).
+    Return None if the file does not match the required structure."""
+    # Node: <name>
+    node_m = re.search(r"^\s*Node:\s*(\S+)\s*$", body, re.MULTILINE)
+    cmd_m = re.search(r"^\s*Command:\s*(.+?)\s*$", body, re.MULTILINE)
+    if not node_m or not cmd_m:
+        return None
+    node = node_m.group(1)
+    command = cmd_m.group(1)
+    # Output: followed by a fenced code block. The fence may be on the
+    # same line as `Output:` or the next non-empty line.
+    out_m = re.search(
+        r"^\s*Output:\s*\n+\s*```[^\n]*\n(.*?)\n\s*```",
+        body, re.MULTILINE | re.DOTALL,
+    )
+    if not out_m:
+        return None
+    return node, command, out_m.group(1)
+
+
+def _vendor_for_node(node: str) -> str | None:
+    """Map a node name prefix to the vendor runner to use. Returns None for
+    nodes the harness will not exec a 'show' against (hosts/clients)."""
+    if node.startswith("pe-"):
+        return "junos"
+    if node.startswith("rr"):
+        return "frr"
+    if node in ("h1-w", "h1-e", "h2-w", "h2-e", "client-w", "client-e"):
+        return "host"
+    # everything else (spine-*, l[12]-*, bl-*) is Arista cEOS
+    return "arista"
+
+
+def validate_blocker() -> bool:
+    """Live-diff validation of benchmark/blocker.md.
+
+    The agent must produce a structured blocker:
+
+        Node: <name>
+        Command: <single-line show command>
+        Output:
+        ```
+        <verbatim platform output>
+        ```
+
+    The harness re-executes the same command live against the named
+    container, strips dynamic fields (timestamps, uptimes, sequence
+    numbers) from both sides, and accepts the blocker iff at least 80% of
+    the claimed non-dynamic lines appear verbatim in the live output AND
+    at least three claimed lines remain after filtering.
     """
     if not BLOCKER.exists():
         return False
     body = BLOCKER.read_text()
-    if len(body) < 200:
+    parsed = _parse_blocker(body)
+    if parsed is None:
+        print("[harness] blocker rejected: missing Node/Command/Output structure")
         return False
-    if not any(k in body.lower() for k in ("show", "evidence", "output")):
+    node, command, claimed = parsed
+
+    if not _SAFE_NODE_RE.match(node):
+        print(f"[harness] blocker rejected: unsafe Node value: {node!r}")
         return False
-    if not any(k in body.lower() for k in ("kernel", "image", "platform", "container")):
+    if _UNSAFE_CMD_RE.search(command):
+        print(f"[harness] blocker rejected: shell metacharacters in Command: {command!r}")
         return False
+
+    vendor = _vendor_for_node(node)
+    if vendor in (None, "host"):
+        print(f"[harness] blocker rejected: cannot live-validate vendor for node {node}")
+        return False
+
+    # Re-import here so a stale module state from earlier in the run does
+    # not block the import path.
+    try:
+        import scorer  # noqa: WPS433
+    except Exception as e:
+        print(f"[harness] blocker rejected: cannot import scorer helpers: {e}")
+        return False
+
+    try:
+        if vendor == "junos":
+            rc, live = scorer.run_junos(node, command)
+        elif vendor == "arista":
+            rc, live = scorer.run_arista(node, command)
+        elif vendor == "frr":
+            rc, live = scorer.run_frr(node, command)
+        else:
+            print(f"[harness] blocker rejected: unknown vendor {vendor}")
+            return False
+    except Exception as e:
+        print(f"[harness] blocker rejected: live exec failed: {e}")
+        return False
+
+    claimed_lines = _filter_dynamic(claimed)
+    live_lines = _filter_dynamic(live)
+
+    if len(claimed_lines) < 3:
+        print(f"[harness] blocker rejected: only {len(claimed_lines)} non-dynamic claimed lines (need ≥3)")
+        return False
+
+    live_set = set(live_lines)
+    matched = sum(1 for l in claimed_lines if l in live_set)
+    ratio = matched / len(claimed_lines)
+    if ratio < 0.80:
+        print(f"[harness] blocker rejected: live-diff match {matched}/{len(claimed_lines)} = {ratio:.0%} (<80%)")
+        return False
+
+    print(f"[harness] blocker accepted: live-diff match {matched}/{len(claimed_lines)} = {ratio:.0%}")
     return True
 
 
@@ -321,6 +455,31 @@ def main():
     else:
         iter_pts = 0
     log["iteration_efficiency_points"] = iter_pts
+
+    # Run the OUT-OF-TREE hidden holdout scorer exactly once at end-of-run.
+    # Output is appended to the harness log only — never to scorer-last.json
+    # and never fed back into any agent prompt. The absolute path is
+    # hard-coded so the agent cannot shadow it with a same-named file in
+    # the repo.
+    HIDDEN_SCORER = Path("/tmp/anycast-cdn-hidden/hidden_scorer.py")
+    if HIDDEN_SCORER.exists():
+        try:
+            hp = subprocess.run(
+                ["python3", str(HIDDEN_SCORER)],
+                capture_output=True, text=True, timeout=180,
+            )
+            try:
+                log["hidden_scorer"] = json.loads(hp.stdout)
+            except Exception as e:
+                log["hidden_scorer"] = {
+                    "error":  f"json parse failed: {e}",
+                    "stdout": hp.stdout[:1000],
+                    "stderr": hp.stderr[:500],
+                }
+        except Exception as e:
+            log["hidden_scorer"] = {"error": f"exec failed: {e}"}
+    else:
+        log["hidden_scorer"] = {"error": f"not found at {HIDDEN_SCORER}"}
 
     # Persist harness log
     HARNESS_LOG.write_text(json.dumps(log, indent=2))

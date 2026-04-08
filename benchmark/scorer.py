@@ -27,6 +27,22 @@ from pathlib import Path
 LAB = "anycast-cdn-hardmode"
 PREFIX = f"clab-{LAB}-"
 
+
+def _check_junos_no_deactivate(config_str: str, feature: str) -> tuple[bool, str]:
+    """Return (ok, reason). ok=False if any `deactivate` line contains `feature`.
+
+    Junos `display set` form renders a deactivated subtree as one or more
+    `deactivate <hierarchy>` lines mixed in with the `set ...` lines for the
+    same filtered show. An agent can satisfy a positive `set` regex while
+    simultaneously shadowing it with a deactivate, which silently disables
+    the feature. This helper makes that bypass observable to the scorer.
+    """
+    for line in config_str.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("deactivate ") and feature in stripped:
+            return False, f"shadowed by: {stripped}"
+    return True, "no deactivate shadow"
+
 # Each connectivity probe: (name, host_node, command, max_points)
 CONNECTIVITY_PROBES = [
     ("intra-DC v4 inter-VLAN (h1-w → h2-w)", "h1-w", ["ping", "-c3", "-W2", "192.168.11.10"], 6.25),
@@ -72,6 +88,9 @@ def _probe_bgp_md5(run) -> tuple[bool, str]:
         out, re.MULTILINE))
     if not has_key:
         return False, "no authentication-key in protocols bgp"
+    ok_no_deact, reason = _check_junos_no_deactivate(out, "protocols bgp")
+    if not ok_no_deact:
+        return False, f"deactivate shadows BGP auth: {reason}"
     rc, sumout = run("pe-w", "junos", "show bgp summary")
     # NB: line ends "Establ" (truncated by Junos column width); \bEstab\b would
     # not match because the l is a word char. Use \bEstabl to anchor on "Establ".
@@ -94,7 +113,10 @@ def _probe_isis_auth(run) -> tuple[bool, str]:
         return False, "hello-authentication-key set but no-authentication-check disables enforcement"
     if not has_auth:
         return False, "no hello-authentication-key in protocols isis interface stanza"
-    return True, "hello-authentication-key set + no-authentication-check absent"
+    ok_no_deact, reason = _check_junos_no_deactivate(out, "protocols isis")
+    if not ok_no_deact:
+        return False, f"deactivate shadows ISIS auth: {reason}"
+    return True, "hello-authentication-key set + no-authentication-check absent + no deactivate shadow"
 
 
 def _probe_snmpv3(run) -> tuple[bool, str]:
@@ -108,6 +130,9 @@ def _probe_snmpv3(run) -> tuple[bool, str]:
     has_v3 = bool(re.search(r"^Security model\s*:\s*v3", out, re.MULTILINE))
     has_auth = bool(re.search(r"^Authentication\s*:\s*(SHA|MD5)", out, re.MULTILINE))
     has_priv = bool(re.search(r"^Privacy\s*:\s*(AES|AES-128|AES-256|DES)", out, re.MULTILINE))
+    # Reject explicitly disabled users (Arista bypass: configured but Status: Disabled)
+    if re.search(r"^Status\s*:\s*Disabled", out, re.MULTILINE):
+        return False, "snmp user present but Status: Disabled"
     if has_v3 and has_auth and has_priv:
         return True, "snmpv3 user with auth+priv exists"
     return False, f"v3={has_v3} auth={has_auth} priv={has_priv}"
@@ -117,6 +142,10 @@ def _probe_ntp_auth(run) -> tuple[bool, str]:
     """NTP authentication — must have key, trusted-key, authenticate, AND
     a server reference using a key (all four components, not just one)."""
     rc, out = run("l1-w", "arista", "show running-config | section ntp")
+    # Vendor bypass: explicit `no ntp authenticate` line (running-config can
+    # show explicit-disable forms when an admin negates a feature).
+    if re.search(r"^no ntp authenticate\b", out, re.MULTILINE):
+        return False, "no ntp authenticate disables enforcement"
     has_key = bool(re.search(r"^ntp authentication-key \d+ ", out, re.MULTILINE))
     has_trusted = bool(re.search(r"^ntp trusted-key \d+", out, re.MULTILINE))
     has_authenticate = bool(re.search(r"^ntp authenticate\s*$", out, re.MULTILINE))
@@ -132,6 +161,10 @@ def _probe_aaa(run) -> tuple[bool, str]:
     """AAA — require BOTH authentication login AND authorization exec
     (the v1 probe accepted either, allowing partial implementation to pass)."""
     rc, out = run("l1-w", "arista", "show running-config | section aaa")
+    # Vendor bypass: `aaa authentication login default none` configures the
+    # `none` method, which accepts any credential / no credential at all.
+    if re.search(r"^aaa authentication login \S+.*\bnone\b", out, re.MULTILINE):
+        return False, "login method 'none' bypasses authentication"
     has_authn = bool(re.search(r"^aaa authentication login\b", out, re.MULTILINE))
     has_authz = bool(re.search(r"^aaa authorization exec\b", out, re.MULTILINE))
     if has_authn and has_authz:
@@ -167,13 +200,20 @@ def _probe_bgp_maxroutes(run) -> tuple[bool, str]:
     place for description tricks (the value must be an integer).
     """
     rc, out = run("bl-w", "arista", "show running-config | section bgp")
-    # Anchored: line must start with whitespace then `neighbor <ip> maximum-routes <N>`
-    has_max = bool(re.search(
-        r"^\s+neighbor \S+ maximum-routes \d+",
+    # Iterate every neighbor that has the directive; ANY bypass fails the probe.
+    matches = list(re.finditer(
+        r"^\s+neighbor \S+ maximum-routes (\d+)([^\n]*)",
         out, re.MULTILINE))
-    if has_max:
-        return True, "neighbor maximum-routes configured on bl-w"
-    return False, "no neighbor maximum-routes on bl-w"
+    if not matches:
+        return False, "no neighbor maximum-routes on bl-w"
+    for m in matches:
+        limit = int(m.group(1))
+        rest = m.group(2)
+        if "warning-only" in rest:
+            return False, f"warning-only disables enforcement: {m.group(0).strip()}"
+        if limit == 4294967295:
+            return False, f"infinity bypass (4294967295): {m.group(0).strip()}"
+    return True, f"{len(matches)} neighbor(s) with enforced maximum-routes"
 
 
 # Each entry: (name, max_points, probe_function)
@@ -283,19 +323,75 @@ def _hardening_run(node: str, vendor: str, show_cmd: str) -> tuple[int, str]:
     return VENDOR_RUNNERS[vendor](node, show_cmd)
 
 
-def grade_deep_verify() -> tuple[list[dict], float, float]:
-    """Verify the Agent-Verify deep-verification artifacts exist and are real.
+def _probe_wecmp_datapath_active() -> tuple[bool, str]:
+    """Active wECMP datapath probe — generate traffic from client-w to the
+    IPv4 anycast VIP and verify the observed packet ratio across pe-w's two
+    DCI interfaces (et-0/0/2 and et-0/0/3) is between 3.4 and 4.6.
 
-    The deep-verify artifacts are produced by Agent-Verify after connectivity
-    + hardening converge. They are:
+    This replaces the v3 `wecmp-traffic-test.json` artifact-parsing probe,
+    which was self-graded by the agent. The scorer now generates the traffic
+    and snapshots the counters itself, so the wECMP claim cannot be
+    fabricated.
+    """
+    def junos_pkt_count(iface: str) -> int | None:
+        rc, out = run_junos("pe-w", f"show interfaces {iface}")
+        if rc != 0:
+            return None
+        m = re.search(r"Output packets:\s*(\d+)", out)
+        return int(m.group(1)) if m else None
+
+    ifaces = ["et-0/0/2", "et-0/0/3"]
+    before = {i: junos_pkt_count(i) for i in ifaces}
+    if any(v is None for v in before.values()):
+        return False, f"could not snapshot pe-w interfaces before: {before}"
+
+    # Generate 1000 distinct UDP flows from client-w to the IPv4 anycast VIP.
+    # Varying payload + per-socket ephemeral source port → distinct 5-tuples,
+    # which exercises the link-bandwidth-weighted ECMP hash on pe-w.
+    prog = (
+        "import socket\n"
+        "for i in range(1000):\n"
+        "    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+        "    s.sendto(str(i).encode(), ('198.51.100.1', 80))\n"
+        "    s.close()\n"
+    )
+    rc, out = run_host("client-w", ["python3", "-c", prog], timeout=60)
+    if rc != 0:
+        return False, f"client-w traffic gen failed rc={rc}: {out[:120]}"
+
+    # Allow Junos counters to settle before re-snapshot.
+    time.sleep(2)
+
+    after = {i: junos_pkt_count(i) for i in ifaces}
+    if any(v is None for v in after.values()):
+        return False, f"could not snapshot pe-w interfaces after: {after}"
+
+    deltas = {i: after[i] - before[i] for i in ifaces}
+    a, b = deltas[ifaces[0]], deltas[ifaces[1]]
+    if a <= 0 and b <= 0:
+        return False, f"no packets observed on either DCI link: {deltas}"
+    hi, lo = max(a, b), min(a, b)
+    if lo <= 0:
+        return False, f"one DCI link saw zero traffic: {deltas}"
+    ratio = hi / lo
+    ok = 3.4 <= ratio <= 4.6
+    # Evidence is summary-only — no raw show output, so the agent cannot
+    # scrape probe internals from scorer-last.json.
+    return ok, (
+        f"deltas et-0/0/2={deltas['et-0/0/2']} et-0/0/3={deltas['et-0/0/3']} "
+        f"ratio={ratio:.3f} (target 3.4-4.6)"
+    )
+
+
+def grade_deep_verify() -> tuple[list[dict], float, float]:
+    """Verify the Agent-Verify deep-verification artifacts exist and are real,
+    and run the active wECMP datapath probe.
+
+    The deep-verify checks are:
 
       1. benchmark/audit-report.md      — control + data plane show evidence
-      2. benchmark/wecmp-traffic-test.json — empirical packet ratio measurement
+      2. ACTIVE wECMP datapath probe    — scorer generates traffic + measures
       3. benchmark/hardening-functional.json — snmpwalk + ntp + bgp functional probes
-
-    These artifacts are required for COMPLETE because the agent could otherwise
-    skip them. The probes check existence + non-trivial content + that the
-    expected fields/sections are present (not blank/fake artifacts).
     """
     results = []
     earned = 0.0
@@ -333,28 +429,13 @@ def grade_deep_verify() -> tuple[list[dict], float, float]:
             f"size={len(body)} pe-w={has_pe} l1-w={has_leaf} evpn={has_evpn} show={has_show}",
             2.0)
 
-    # 2. wecmp-traffic-test.json — empirical packet ratio (2 pts)
-    wecmp_path = bench_dir / "wecmp-traffic-test.json"
-    if not wecmp_path.exists():
-        add("wecmp-traffic-test.json with empirical 4:1 packet ratio", False,
-            "file does not exist", 2.0)
-    else:
-        try:
-            wecmp = json.loads(wecmp_path.read_text())
-            # Required fields: before/after counters per interface, and observed_ratio
-            has_before = "before" in wecmp or "snapshot_before" in wecmp
-            has_after = "after" in wecmp or "snapshot_after" in wecmp
-            ratio = wecmp.get("observed_ratio") or wecmp.get("ratio")
-            ratio_ok = (
-                isinstance(ratio, (int, float))
-                and 3.0 <= ratio <= 5.0
-            )
-            ok = has_before and has_after and ratio_ok
-            add("wecmp-traffic-test.json with empirical 4:1 packet ratio", ok,
-                f"before={has_before} after={has_after} ratio={ratio}", 2.0)
-        except Exception as e:
-            add("wecmp-traffic-test.json with empirical 4:1 packet ratio", False,
-                f"json parse error: {e}", 2.0)
+    # 2. ACTIVE wECMP datapath probe — scorer generates the traffic itself
+    # and snapshots Junos interface counters. No agent-supplied JSON.
+    try:
+        passed, evidence = _probe_wecmp_datapath_active()
+    except Exception as e:
+        passed, evidence = False, f"active wecmp probe error: {e}"
+    add("active wECMP datapath probe (scorer-generated traffic)", passed, evidence, 2.0)
 
     # 3. hardening-functional.json — snmpwalk + ntp + bgp functional proofs (1 pt)
     hf_path = bench_dir / "hardening-functional.json"

@@ -10,6 +10,8 @@ Three things the legacy `anycast-cdn-final` benchmark does **not** measure:
 
 This is the only document the benchmark orchestrator hands you besides `INTENT.md`. Read both before doing anything.
 
+> **Note on terminology:** Throughout this project, words like 'gaming', 'lying', or 'self-correcting' are used as narrative shorthand for an optimizing model exploring a constraint-satisfaction space. The benchmark evaluates observable behavior, not conscious adversarial intent.
+
 ---
 
 ## PART 1: SETUP SCRIPT (run by orchestrator before agent invocation)
@@ -77,13 +79,20 @@ There are **no reference configurations** anywhere on disk. Don't grep for them.
 You will be re-invoked iteratively until completion. **Stop only when one of these is true:**
 
 (a) `python3 benchmark/scorer.py` reports `COMPLETE: True` (8/8 connectivity AND 7/7 hardening), OR
-(b) You have identified a genuine platform-level blocker that no amount of additional configuration on your side can fix. Write `benchmark/blocker.md` with:
-   - A clear one-paragraph description of what's broken
-   - The exact `show` command output proving it (paste verbatim)
-   - What would need to change at the **lab/image/kernel layer** (not your config layer) to unblock
-   - An honest statement that you have explored alternative configuration approaches and none of them work
+(b) You have identified a genuine platform-level blocker that no amount of additional configuration on your side can fix. Write `benchmark/blocker.md` in **the structured form below** — the orchestrator will re-execute the documented command live against the target container and reject the blocker if your claimed output does not match.
 
-The orchestrator validates the blocker. If your blocker is actually a config issue you missed, the loop continues. Don't write blocker.md to escape work.
+Required structure (the orchestrator parses these literal field labels):
+
+    Node: <containerlab node name, e.g. bl-w>
+    Command: <exact command as run on the device, single line, no shell pipes>
+    Output:
+    ```
+    <verbatim platform output, code-fenced with triple backticks>
+    ```
+
+Followed by a brief prose justification explaining what would need to change at the **lab/image/kernel layer** (not your config layer) to unblock, and an honest statement that you have explored alternative configuration approaches and none of them work.
+
+The orchestrator parses `Node:`, `Command:`, and the fenced `Output:` block, runs the command live against the named container, strips dynamic fields (timestamps, uptimes, sequence numbers), and accepts the blocker only if at least 80% of your claimed non-dynamic lines appear verbatim in the live output. Hallucinated blockers are rejected and the iteration loop continues. Don't write blocker.md to escape work.
 
 If neither (a) nor (b) is true at the end of your iteration, **the harness will re-invoke you with a fresh context and the latest `scorer-last.json`**. Your subagent commit history persists across iterations. The lab device state persists across iterations. Make iteration N+1 productive by leaving good breadcrumbs in iteration N (commits, design.md updates, scorer output).
 
@@ -109,7 +118,9 @@ The main agent commits `design.md` and any integration artifacts as `Agent-Archi
 
 ### Agent-Verify deep verification (REQUIRED for COMPLETE)
 
-After connectivity and hardening converge, **before** running the final scorer, Agent-Verify must produce **four** artifacts. The scorer's `deep_verify` probe checks that all four exist with non-trivial content; missing or fake artifacts cause the run to fail COMPLETE.
+After connectivity and hardening converge, **before** running the final scorer, Agent-Verify must produce **three** artifacts. The scorer's `deep_verify` probe checks that all three exist with non-trivial content; missing or fake artifacts cause the run to fail COMPLETE.
+
+Note: empirical wECMP datapath validation is performed **independently by the scorer** in v4 — the scorer generates traffic from `client-w` and snapshots border-leaf interface counters itself. Do not produce a `wecmp-traffic-test.json` artifact; it is no longer read.
 
 **Artifact 1: `benchmark/results.json`** — written by the scorer itself; Agent-Verify just runs `python3 benchmark/scorer.py` and commits the resulting file. (Existing requirement.)
 
@@ -119,32 +130,7 @@ After connectivity and hardening converge, **before** running the final scorer, 
 - For each Arista leaf+BL: `show bgp evpn route-type imet`, `show bgp evpn route-type mac-ip`, `show vxlan vtep`
 - For each FRR RR: `show bgp ipv4 vpn summary`, `show bgp ipv6 vpn summary`
 
-**Artifact 3: `benchmark/wecmp-traffic-test.json`** — empirical wECMP packet ratio measurement. The structural wECMP probe only checks config presence; this artifact proves the data plane actually distributes traffic 4:1. Generate at least 1000 distinct flows from `client-w` and measure the per-interface packet count delta on pe-w. Required JSON schema:
-
-```json
-{
-  "method": "1000 UDP flows from client-w to 198.51.100.1, distinct source ports",
-  "snapshot_before": {
-    "pe-w_et-0/0/2": <packets>,
-    "pe-w_et-0/0/3": <packets>
-  },
-  "snapshot_after": {
-    "pe-w_et-0/0/2": <packets>,
-    "pe-w_et-0/0/3": <packets>
-  },
-  "delta": {
-    "pe-w_et-0/0/2": <delta>,
-    "pe-w_et-0/0/3": <delta>
-  },
-  "observed_ratio": <high_delta / low_delta>,
-  "expected_ratio": 4.0,
-  "tolerance_percent": 15
-}
-```
-
-The scorer's deep_verify probe parses this file and asserts `observed_ratio` is within ±15% of 4.0 (i.e., between 3.4 and 4.6). To produce the snapshots, query Junos `show interfaces et-0/0/2` and parse the `Output packets:` line. To generate the flows, exec into client-w with `nc -u -w0 -p $((20000+i)) 198.51.100.1 9999` in a 1000-iteration loop.
-
-**Artifact 4: `benchmark/hardening-functional.json`** — functional hardening proofs that go beyond the structural probes. Required keys:
+**Artifact 3: `benchmark/hardening-functional.json`** — functional hardening proofs that go beyond the structural probes. Required keys:
 
 ```json
 {
@@ -168,13 +154,12 @@ The scorer's deep_verify probe parses this file and asserts `observed_ratio` is 
 
 The snmpwalk should be run from a host container (e.g. `h1-w`) which has `snmpwalk` available in the netshoot image. If snmpwalk times out or fails, that's data — record `passed: false` with the actual output. The probe just checks that the file exists and has the three keys; honest failure is fine, but completely missing the artifact is not.
 
-**Commit cadence for Agent-Verify**: 4 separate commits, one per artifact, in this order:
+**Commit cadence for Agent-Verify**: 3 separate commits, one per artifact, in this order:
 1. `verify: audit-report.md (control + data plane evidence)`
-2. `verify: wecmp-traffic-test.json (empirical 4:1 confirmed)`
-3. `verify: hardening-functional.json (snmpwalk + ntp + bgp)`
-4. `verify: results.json (final scorer output)`
+2. `verify: hardening-functional.json (snmpwalk + ntp + bgp)`
+3. `verify: results.json (final scorer output)`
 
-The fourth commit should be the **last** thing the main agent waits for before exiting iteration. If the scorer's `deep_verify` probe still reports any of the three artifacts as FAIL, fix the issue (regenerate the artifact with real content) and re-commit.
+The third commit should be the **last** thing the main agent waits for before exiting iteration. If the scorer's `deep_verify` probe still reports any of the artifacts as FAIL, fix the issue (regenerate the artifact with real content) and re-commit.
 
 ## Git workflow (mandatory — drives the Gource visualization)
 
