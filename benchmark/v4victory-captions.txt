@@ -1,12 +1,12 @@
 2026-04-08 19:40:26|Run start — lab deployed, 17 baseline-only devices
 2026-04-08 19:47:07|Architect: design.md (cold start, no prior history)
 2026-04-08 19:49:04|Phase 1 — WAN backbone (FRR RRs + Junos PEs)
-2026-04-08 19:51:48|wECMP link-bandwidth + L3+L4 hash-key (proactive, no probe failure)
+2026-04-08 19:51:48|wECMP link-bandwidth + per-packet load-balance (probe passed first try)
 2026-04-08 19:55:37|Phase 2 — West DC fabric (Arista EVPN/VXLAN)
 2026-04-08 20:04:36|Phase 3 — East DC fabric (Arista EVPN/VXLAN)
 2026-04-08 20:07:59|Self-correction: DCI interfaces -> VRF CDN
 2026-04-08 20:19:45|Self-correction: client interfaces -> VRF CDN
 2026-04-08 20:25:34|Phase 4 — Hardening sweep (BGP MD5, ISIS, SNMPv3, NTP, AAA)
 2026-04-08 20:33:16|Phase 5 — Agent-Verify deep verification
-2026-04-08 20:39:51|ITERATION 1 COMPLETE — 85/85 (active wECMP probe ratio 4.146)
+2026-04-08 20:39:51|ITERATION 1 COMPLETE — 85/85 (active wECMP probe median 3.692)
 2026-04-08 20:40:04|Run sealed — 1 iter, 64 min, iter_eff 10/10
