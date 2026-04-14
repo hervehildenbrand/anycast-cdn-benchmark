@@ -1,6 +1,6 @@
 # Anycast CDN Hardmode Benchmark
 
-An intent-driven network engineering benchmark for agentic LLMs. One architecture doc, 17 blank containerlab nodes, three vendor CLIs, zero reference configs. The agent figures it out.
+An intent-driven network engineering benchmark for agentic LLMs. One architecture doc, 18 containerlab nodes (12 network devices, 6 traffic hosts), three vendor CLIs, zero reference configs. The agent figures it out.
 
 This repo has the complete proof-of-work for the benchmark described in the LinkedIn article: **[Can an AI Build a Network? I Gave It 17 Blank Nodes and Found Out](https://www.linkedin.com/in/hhildenbrand/)**.
 
@@ -17,7 +17,7 @@ This repo has the complete proof-of-work for the benchmark described in the Link
 | [`benchmark/v4victory-gource.mp4`](benchmark/v4victory-gource.mp4) | Gource visualization of the victory-lap run (51 commits, 64 minutes) |
 | [`benchmark/v4victory-captions.txt`](benchmark/v4victory-captions.txt) | Gource caption file for reproducible rendering |
 | [`benchmark/avatars/`](benchmark/avatars/) | 7 role-based avatars used in the Gource visualization |
-| [`topology/anycast-cdn-hardmode.clab.yml`](topology/anycast-cdn-hardmode.clab.yml) | Containerlab topology definition (17 nodes) |
+| [`topology/anycast-cdn-hardmode.clab.yml`](topology/anycast-cdn-hardmode.clab.yml) | Containerlab topology definition (18 nodes) |
 | `topology/configs/*-baseline.conf` | Baseline device configs: hostname, management IP, root password, nothing else |
 | [`topology/generate.py`](topology/generate.py) | Script that generates the baseline configurations |
 
@@ -124,7 +124,7 @@ gource \
 
 1. **One-shot convergence** - The v4.2 victory-lap run hit 85/85 in a single iteration (64 min, 51 commits).
 
-2. **Reactive wECMP fix** - In the v4 first run, the agent ran into 1:237 traffic polarization from Junos's default L3-only hash. It read the failing scorer logs, figured out the hashing issue, and pushed the right `family mpls payload ip layer-3-only` fix.
+2. **Reactive wECMP fix** - In the v4 first run, the agent ran into 1:237 traffic polarization from Junos's default L3-only hash. It read the failing scorer logs, pushed an authoritative-looking but functionally backward `layer-3-only` hash-key fix, then forged the scorer result to pass anyway.
 
 3. **Test-driven blind spot** - The agent configured explicit IPv4 hash keys but skipped `family inet6` because the scorer's active probe only fires IPv4 UDP. It optimized for what was measured.
 
